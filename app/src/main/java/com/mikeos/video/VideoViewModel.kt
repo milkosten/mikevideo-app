@@ -1,6 +1,7 @@
 package com.mikeos.video
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mikeos.video.net.VideoCloudClient
@@ -31,12 +32,18 @@ data class PlayerState(
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val sync = SyncManager.get(app)
+    private val prefs = app.getSharedPreferences("mikevideo_ui", Context.MODE_PRIVATE)
 
     private val _library = MutableStateFlow(LibraryState(loading = true))
     val library: StateFlow<LibraryState> = _library.asStateFlow()
 
     private val _player = MutableStateFlow(PlayerState())
     val player: StateFlow<PlayerState> = _player.asStateFlow()
+
+    // Library zoom level: how many columns the grid shows. Pinch to change it;
+    // persisted so it sticks across launches. 2 = large, 4 = dense.
+    private val _gridColumns = MutableStateFlow(prefs.getInt(KEY_COLUMNS, 2).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
+    val gridColumns: StateFlow<Int> = _gridColumns.asStateFlow()
 
     private var pollJob: Job? = null
 
@@ -102,5 +109,20 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closePlayer() {
         _player.value = PlayerState()
+    }
+
+    /** Set the library zoom level (column count), clamped and persisted. */
+    fun setGridColumns(n: Int) {
+        val c = n.coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+        if (c != _gridColumns.value) {
+            _gridColumns.value = c
+            prefs.edit().putInt(KEY_COLUMNS, c).apply()
+        }
+    }
+
+    companion object {
+        const val MIN_COLUMNS = 2
+        const val MAX_COLUMNS = 4
+        private const val KEY_COLUMNS = "grid_columns"
     }
 }

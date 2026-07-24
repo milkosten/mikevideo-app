@@ -16,6 +16,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,12 +63,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -118,10 +125,13 @@ class MainActivity : ComponentActivity() {
                 val vm: VideoViewModel = viewModel()
                 val library by vm.library.collectAsStateWithLifecycle()
                 val player by vm.player.collectAsStateWithLifecycle()
+                val columns by vm.gridColumns.collectAsStateWithLifecycle()
 
                 if (player.video == null) {
                     LibraryScreen(
                         state = library,
+                        columns = columns,
+                        onColumns = { vm.setGridColumns(it) },
                         onRefresh = { vm.refresh() },
                         onForceSync = { vm.forceSync() },
                         onAutoSync = { vm.setAutoSync(it) },
@@ -194,6 +204,8 @@ private fun friendlyDate(iso: String?): String {
 @Composable
 private fun LibraryScreen(
     state: LibraryState,
+    columns: Int,
+    onColumns: (Int) -> Unit,
     onRefresh: () -> Unit,
     onForceSync: () -> Unit,
     onAutoSync: (Boolean) -> Unit,
@@ -267,13 +279,18 @@ private fun LibraryScreen(
                     modifier = Modifier.padding(top = 24.dp),
                 )
             } else {
+                // Two-finger pinch changes the zoom level (column count); single-finger
+                // drag still scrolls because we only consume multi-touch events.
+                val gap = if (columns >= 4) 4.dp else if (columns == 3) 6.dp else 10.dp
                 LazyVerticalStaggeredGrid(
-                    columns = StaggeredGridCells.Fixed(2),
-                    verticalItemSpacing = 10.dp,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize(),
+                    columns = StaggeredGridCells.Fixed(columns),
+                    verticalItemSpacing = gap,
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pinchToZoomColumns(columns, onColumns),
                 ) {
-                    items(state.videos, key = { it.id }) { v -> VideoCard(v, onOpen) }
+                    items(state.videos, key = { it.id }) { v -> VideoCard(v, columns, onOpen) }
                 }
             }
         }
@@ -393,19 +410,53 @@ private fun SettingRow(label: String, checked: Boolean, onChange: (Boolean) -> U
     }
 }
 
+/** Two-finger pinch to change the grid zoom level. Only consumes multi-touch, so
+ *  single-finger vertical scrolling of the grid keeps working. Pinch OUT → fewer
+ *  columns (bigger tiles); pinch IN → more columns (denser). */
 @Composable
-private fun VideoCard(v: VideoCloudClient.Video, onOpen: (VideoCloudClient.Video) -> Unit) {
+private fun Modifier.pinchToZoomColumns(columns: Int, onColumns: (Int) -> Unit): Modifier {
+    val cols by rememberUpdatedState(columns)
+    val set by rememberUpdatedState(onColumns)
+    return this.pointerInput(Unit) {
+        awaitEachGesture {
+            var accum = 1f
+            // Watch in the Initial pass so a pinch is caught before the grid's own
+            // scroll gesture — but we only ever consume when 2+ fingers are down, so
+            // one-finger scrolling is left completely alone.
+            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            do {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.size >= 2) {
+                    val zoom = event.calculateZoom()
+                    if (zoom != 1f) {
+                        accum *= zoom
+                        if (accum > 1.22f) { set(cols - 1); accum = 1f }
+                        else if (accum < 0.82f) { set(cols + 1); accum = 1f }
+                        event.changes.forEach { if (it.positionChanged()) it.consume() }
+                    }
+                }
+            } while (event.changes.any { it.pressed })
+        }
+    }
+}
+
+@Composable
+private fun VideoCard(v: VideoCloudClient.Video, columns: Int, onOpen: (VideoCloudClient.Video) -> Unit) {
     val ready = v.status == "ready"
     // Card matches the video's DISPLAY aspect (portrait tall, landscape wide) → the
     // staggered grid respects orientation and the thumbnail never gets cropped.
     val aspect = v.aspectRatioF.coerceIn(0.55f, 1.9f)
+    // Scale the tile chrome down as tiles get smaller (denser zoom).
+    val radius = if (columns >= 4) 9.dp else if (columns == 3) 11.dp else 14.dp
+    val playSize = if (columns >= 4) 22.dp else if (columns == 3) 30.dp else 38.dp
+    val inset = if (columns >= 4) 5.dp else if (columns == 3) 6.dp else 8.dp
     // A clean, Photos-style tile: just the frame + duration. The filename is a
     // technical detail (e.g. "VID_20260722.mp4") — never surfaced to the viewer.
     Box(
         Modifier
             .fillMaxWidth()
             .aspectRatio(aspect)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(radius))
             .background(MikeSurfaceVariant)
             .clickable(enabled = ready) { onOpen(v) },
         contentAlignment = Alignment.Center,
@@ -421,24 +472,24 @@ private fun VideoCard(v: VideoCloudClient.Video, onOpen: (VideoCloudClient.Video
             )
         }
         if (!ready) {
-            StatusChip(v.status, Modifier.align(Alignment.TopEnd).padding(8.dp))
+            StatusChip(v.status, Modifier.align(Alignment.TopEnd).padding(inset))
         } else {
             Icon(
                 Icons.Filled.PlayArrow,
                 contentDescription = "Play",
                 tint = Color.White.copy(alpha = 0.92f),
-                modifier = Modifier.size(38.dp),
+                modifier = Modifier.size(playSize),
             )
             val dur = fmtDuration(v.durationSec)
-            if (dur.isNotEmpty()) {
+            if (dur.isNotEmpty() && columns < 4) {   // hide the badge when tiles get tiny
                 Text(
                     dur,
                     color = Color.White,
-                    fontSize = 11.sp,
+                    fontSize = if (columns == 3) 10.sp else 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(8.dp)
+                        .padding(inset)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color.Black.copy(alpha = 0.72f))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
