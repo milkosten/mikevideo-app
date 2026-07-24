@@ -520,7 +520,7 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
             }
             DisposableEffect(exo) { onDispose { exo.release() } }
 
-            var chromeVisible by remember { mutableStateOf(true) }
+            var chromeVisible by remember { mutableStateOf(false) }  // start clean; tap to reveal
             var fill by remember { mutableStateOf(false) }          // fit ⇄ zoom(crop-to-fill)
             var landscape by remember { mutableStateOf(false) }
             var infoOpen by remember { mutableStateOf(false) }
@@ -532,6 +532,7 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
                     PlayerView(ctx).apply {
                         player = exo
                         useController = true
+                        controllerAutoShow = false        // don't pop the controls when playback starts
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                         keepScreenOn = true
@@ -541,6 +542,7 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
                                 chromeVisible = visibility == View.VISIBLE
                             }
                         )
+                        hideController()                  // start with a clean, chrome-free frame
                     }
                 },
                 update = { pv ->
