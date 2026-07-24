@@ -43,21 +43,48 @@ class VideoCloudClient(
 ) {
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
-    /** A video row from the library (`GET /api/videos`) / detail (`GET /api/videos/{id}`). */
+    /** A video row from the library (`GET /api/videos`) / detail (`GET /api/videos/{id}`).
+     *
+     * IMPORTANT: `width`/`height` are the CODED pixel size (as stored). For anything the
+     * user SEES — the player box, the thumbnail aspect, the resolution readout — use
+     * [dispW]/[dispH]/[aspect], which are the display dims (coded dims with the rotation
+     * matrix applied). Phone portrait clips are coded 1920x1080 rot=90 → display 1080x1920. */
     data class Video(
         val id: String,
         val filename: String,
         val status: String,               // uploading | encoding | ready | failed
         val durationSec: Double?,
-        val width: Int?,
-        val height: Int?,
+        val width: Int?,                  // coded width
+        val height: Int?,                 // coded height
+        val displayWidth: Int?,           // post-rotation width (what to render)
+        val displayHeight: Int?,          // post-rotation height (what to render)
+        val orientation: String?,         // portrait | landscape | square
+        val aspectRatio: String?,         // reduced display AR, e.g. "9:16"
+        val rotation: Int?,               // 0 | 90 | 180 | 270
+        val fps: Double?,
+        val videoCodec: String?,
+        val audioCodec: String?,
+        val hasAudio: Boolean,
+        val isHdr: Boolean,
         val bytes: Long?,
         val thumbUrl: String?,            // absolute (prefixed) or null
         val hlsUrl: String?,              // absolute (prefixed) or null (detail only, when ready)
         val takenAt: String?,
         val createdAt: String?,
         val error: String?,
-    )
+    ) {
+        /** Display width, falling back to coded width. */
+        val dispW: Int? get() = displayWidth ?: width
+        /** Display height, falling back to coded height. */
+        val dispH: Int? get() = displayHeight ?: height
+        /** Display aspect ratio as a float (w/h). Defaults to 16:9 when unknown. */
+        val aspectRatioF: Float
+            get() {
+                val w = dispW; val h = dispH
+                return if (w != null && h != null && w > 0 && h > 0) w.toFloat() / h else 16f / 9f
+            }
+        val isPortrait: Boolean get() = (dispH ?: 0) > (dispW ?: 0)
+    }
 
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
@@ -181,6 +208,16 @@ class VideoCloudClient(
         durationSec = o.numOrNull("duration_sec"),
         width = o.intOrNull("width"),
         height = o.intOrNull("height"),
+        displayWidth = o.intOrNull("display_width"),
+        displayHeight = o.intOrNull("display_height"),
+        orientation = o.strOrNull("orientation"),
+        aspectRatio = o.strOrNull("aspect_ratio"),
+        rotation = o.intOrNull("rotation"),
+        fps = o.numOrNull("fps"),
+        videoCodec = o.strOrNull("video_codec"),
+        audioCodec = o.strOrNull("audio_codec"),
+        hasAudio = o.optBoolean("has_audio", false),
+        isHdr = o.optBoolean("is_hdr", false),
         bytes = o.longOrNull("bytes"),
         thumbUrl = abs(o.strOrNull("thumb_url")),
         hlsUrl = abs(o.strOrNull("hls_url")),
