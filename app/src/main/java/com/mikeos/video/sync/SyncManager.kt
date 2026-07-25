@@ -159,6 +159,11 @@ class SyncManager private constructor(private val appContext: Context) {
         return cloud.getVideo(key, id)
     }
 
+    suspend fun search(query: String): List<VideoCloudClient.SearchResult> {
+        val key = apiKey() ?: return emptyList()
+        return cloud.search(key, query)
+    }
+
     // ---- gating -----------------------------------------------------------------------------
 
     private fun unmeteredWifi(): Boolean {

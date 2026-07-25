@@ -3,6 +3,7 @@ package com.mikeos.video
 import android.Manifest
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -19,6 +20,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,18 +32,22 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlayArrow
@@ -85,10 +93,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -126,12 +136,16 @@ class MainActivity : ComponentActivity() {
                 val library by vm.library.collectAsStateWithLifecycle()
                 val player by vm.player.collectAsStateWithLifecycle()
                 val columns by vm.gridColumns.collectAsStateWithLifecycle()
+                val searchState by vm.search.collectAsStateWithLifecycle()
 
-                if (player.video == null) {
+                if (player.video == null && !player.loading) {
                     LibraryScreen(
                         state = library,
                         columns = columns,
                         onColumns = { vm.setGridColumns(it) },
+                        search = searchState,
+                        onQuery = { vm.setQuery(it) },
+                        onOpenResult = { id, start -> vm.openSearchResult(id, start) },
                         onRefresh = { vm.refresh() },
                         onForceSync = { vm.forceSync() },
                         onAutoSync = { vm.setAutoSync(it) },
@@ -206,6 +220,9 @@ private fun LibraryScreen(
     state: LibraryState,
     columns: Int,
     onColumns: (Int) -> Unit,
+    search: SearchState,
+    onQuery: (String) -> Unit,
+    onOpenResult: (String, Double) -> Unit,
     onRefresh: () -> Unit,
     onForceSync: () -> Unit,
     onAutoSync: (Boolean) -> Unit,
@@ -253,44 +270,52 @@ private fun LibraryScreen(
 
             Spacer(Modifier.height(10.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "LIBRARY · ${state.videos.size}",
-                    color = MikeMuted,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                )
-                if (state.loading) {
-                    CircularProgressIndicator(
-                        Modifier.padding(start = 10.dp).size(13.dp),
-                        color = MikeAccent,
-                        strokeWidth = 2.dp,
-                    )
-                }
-            }
-            Spacer(Modifier.height(10.dp))
+            SearchField(search.query, onQuery)
+            Spacer(Modifier.height(12.dp))
 
-            if (state.videos.isEmpty()) {
-                Text(
-                    state.notice ?: "No videos.",
-                    color = MikeMuted,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 24.dp),
-                )
+            if (search.query.isNotBlank()) {
+                // Spoken-word search results (Phase B).
+                SearchResults(search, onOpenResult)
             } else {
-                // Two-finger pinch changes the zoom level (column count); single-finger
-                // drag still scrolls because we only consume multi-touch events.
-                val gap = if (columns >= 4) 4.dp else if (columns == 3) 6.dp else 10.dp
-                LazyVerticalStaggeredGrid(
-                    columns = StaggeredGridCells.Fixed(columns),
-                    verticalItemSpacing = gap,
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pinchToZoomColumns(columns, onColumns),
-                ) {
-                    items(state.videos, key = { it.id }) { v -> VideoCard(v, columns, onOpen) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "LIBRARY · ${state.videos.size}",
+                        color = MikeMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                    )
+                    if (state.loading) {
+                        CircularProgressIndicator(
+                            Modifier.padding(start = 10.dp).size(13.dp),
+                            color = MikeAccent,
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                if (state.videos.isEmpty()) {
+                    Text(
+                        state.notice ?: "No videos.",
+                        color = MikeMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 24.dp),
+                    )
+                } else {
+                    // Two-finger pinch changes the zoom level (column count); single-finger
+                    // drag still scrolls because we only consume multi-touch events.
+                    val gap = if (columns >= 4) 4.dp else if (columns == 3) 6.dp else 10.dp
+                    LazyVerticalStaggeredGrid(
+                        columns = StaggeredGridCells.Fixed(columns),
+                        verticalItemSpacing = gap,
+                        horizontalArrangement = Arrangement.spacedBy(gap),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pinchToZoomColumns(columns, onColumns),
+                    ) {
+                        items(state.videos, key = { it.id }) { v -> VideoCard(v, columns, onOpen) }
+                    }
                 }
             }
         }
@@ -441,6 +466,97 @@ private fun Modifier.pinchToZoomColumns(columns: Int, onColumns: (Int) -> Unit):
 }
 
 @Composable
+private fun SearchField(query: String, onQuery: (String) -> Unit) {
+    androidx.compose.material3.TextField(
+        value = query,
+        onValueChange = onQuery,
+        singleLine = true,
+        placeholder = { Text("Search what was said…", color = MikeMuted, fontSize = 14.sp) },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = MikeMuted) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQuery("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear", tint = MikeMuted)
+                }
+            }
+        },
+        shape = RoundedCornerShape(14.dp),
+        colors = androidx.compose.material3.TextFieldDefaults.colors(
+            focusedContainerColor = MikeSurfaceVariant,
+            unfocusedContainerColor = MikeSurfaceVariant,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            focusedTextColor = MikeOnSurface,
+            unfocusedTextColor = MikeOnSurface,
+            cursorColor = MikeAccent,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun SearchResults(search: SearchState, onOpenResult: (String, Double) -> Unit) {
+    if (search.loading && search.results.isEmpty()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+            CircularProgressIndicator(Modifier.size(15.dp), color = MikeAccent, strokeWidth = 2.dp)
+            Spacer(Modifier.size(10.dp))
+            Text("Searching…", color = MikeMuted, fontSize = 13.sp)
+        }
+        return
+    }
+    if (search.results.isEmpty()) {
+        Text("No spoken matches for “${search.query}”.", color = MikeMuted, fontSize = 13.sp,
+            modifier = Modifier.padding(top = 16.dp))
+        return
+    }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+    ) {
+        search.results.forEach { r -> SearchResultRow(r, onOpenResult) }
+    }
+}
+
+@Composable
+private fun SearchResultRow(r: VideoCloudClient.SearchResult, onOpenResult: (String, Double) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MikeSurfaceVariant)
+            .clickable { onOpenResult(r.id, r.matchStart) }
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(width = 108.dp, height = 62.dp).clip(RoundedCornerShape(9.dp)).background(MikeBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            val context = LocalContext.current
+            if (r.thumbUrl != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(r.thumbUrl).crossfade(true).build(),
+                    imageLoader = VideoImages.loader(context),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(r.title, color = MikeOnSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            val snippet = buildString {
+                append(fmtDuration(r.matchStart))
+                r.matchText?.let { append("  ·  "); append(it) }
+            }
+            Text(snippet, color = MikeMuted, fontSize = 12.5.sp, maxLines = 2,
+                modifier = Modifier.padding(top = 3.dp))
+        }
+    }
+}
+
+@Composable
 private fun VideoCard(v: VideoCloudClient.Video, columns: Int, onOpen: (VideoCloudClient.Video) -> Unit) {
     val ready = v.status == "ready"
     // Card matches the video's DISPLAY aspect (portrait tall, landscape wide) → the
@@ -526,7 +642,6 @@ private fun StatusChip(status: String, modifier: Modifier = Modifier) {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
-    val v = state.video ?: return
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -542,6 +657,18 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
             controller?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
+    }
+
+    val v = state.video
+    if (v == null) {
+        // Loading a search hit — spinner over black until the detail arrives.
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            CircularProgressIndicator(color = MikeAccent, modifier = Modifier.align(Alignment.Center))
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).statusBarsPadding()) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+        }
+        return
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -561,13 +688,25 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
             // ExoPlayer over the HLS master. /media is gated on the video_id (not the
             // X-API-KEY), so the default HTTP data source needs no auth header.
             val exo = remember(hls) {
-                ExoPlayer.Builder(context).build().apply {
-                    val dsf = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-                    val source = HlsMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(hls))
-                    setMediaSource(source)
-                    prepare()
-                    playWhenReady = true
+                val dsf = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                val itemB = MediaItem.Builder().setUri(hls)
+                // Side-load the WebVTT subtitle track (Phase B) — shows a CC toggle + captions.
+                v.captionsUrl?.let { cap ->
+                    itemB.setSubtitleConfigurations(listOf(
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(cap))
+                            .setMimeType(MimeTypes.TEXT_VTT)
+                            .setLanguage(v.spokenLanguage ?: "und")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build()))
                 }
+                ExoPlayer.Builder(context)
+                    .setMediaSourceFactory(DefaultMediaSourceFactory(dsf))
+                    .build().apply {
+                        setMediaItem(itemB.build())
+                        prepare()
+                        if (state.seekToMs > 0) seekTo(state.seekToMs)   // deep-link from search
+                        playWhenReady = true
+                    }
             }
             DisposableEffect(exo) { onDispose { exo.release() } }
 
@@ -628,7 +767,11 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
             }
 
             // Details, on demand only — the video stays clean until you ask for them.
-            if (infoOpen) VideoInfoOverlay(v = v, onClose = { infoOpen = false })
+            if (infoOpen) VideoInfoOverlay(
+                v = v,
+                onSeek = { ms -> exo.seekTo(ms); exo.play(); infoOpen = false },
+                onClose = { infoOpen = false },
+            )
         }
     }
 }
@@ -654,9 +797,9 @@ private fun PlayerTopBar(
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
         }
-        // Just a friendly capture date — no technical noise on the video itself.
+        // The AI title if we have one (human, not the filename), else the capture date.
         Text(
-            friendlyDate(v.takenAt ?: v.createdAt),
+            v.aiTitle?.takeUnless { it.isBlank() } ?: friendlyDate(v.takenAt ?: v.createdAt),
             color = Color.White,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
@@ -686,7 +829,7 @@ private fun PlayerTopBar(
 /** On-demand technical details — the stuff a curious user *can* look up, but that never
  *  clutters the video. Tap the ⓘ to open; tap anywhere to dismiss. */
 @Composable
-private fun VideoInfoOverlay(v: VideoCloudClient.Video, onClose: () -> Unit) {
+private fun VideoInfoOverlay(v: VideoCloudClient.Video, onSeek: (Long) -> Unit, onClose: () -> Unit) {
     val rows = buildList {
         friendlyDate(v.takenAt ?: v.createdAt).takeIf { it.isNotEmpty() }?.let { add("Recorded" to it) }
         if (v.dispW != null && v.dispH != null) {
@@ -711,11 +854,58 @@ private fun VideoInfoOverlay(v: VideoCloudClient.Video, onClose: () -> Unit) {
     ) {
         Column(
             Modifier
-                .padding(28.dp)
+                .padding(24.dp)
+                .heightIn(max = 620.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(MikeSurface)
-                .padding(22.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(22.dp)
+                // Swallow taps inside the card so they don't dismiss the overlay.
+                .clickable(enabled = false) {},
         ) {
+            // AI layer (Phase C): title, summary, tags, and clickable chapters.
+            v.aiTitle?.takeUnless { it.isBlank() }?.let {
+                Text(it, color = MikeOnSurface, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+            }
+            v.aiSummary?.takeUnless { it.isBlank() }?.let {
+                Text(it, color = MikeMuted, fontSize = 13.5.sp, lineHeight = 19.sp)
+                Spacer(Modifier.height(10.dp))
+            }
+            if (v.aiTags.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                ) {
+                    v.aiTags.forEach { tag ->
+                        Text(
+                            tag, color = MikeAccent, fontSize = 11.5.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(MikeAccent.copy(alpha = 0.12f))
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            if (v.aiChapters.isNotEmpty()) {
+                Text("CHAPTERS", color = MikeMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.height(6.dp))
+                v.aiChapters.forEach { ch ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                            .clickable { onSeek((ch.start * 1000).toLong()) }.padding(vertical = 6.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(fmtDuration(ch.start), color = MikeAccent, fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.width(56.dp))
+                        Text(ch.title, color = MikeOnSurface, fontSize = 13.5.sp)
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
             Text("Information", color = MikeOnSurface, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(14.dp))
             rows.forEach { (label, value) ->

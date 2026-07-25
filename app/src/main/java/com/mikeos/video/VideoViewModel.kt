@@ -27,6 +27,14 @@ data class LibraryState(
 data class PlayerState(
     val video: VideoCloudClient.Video? = null,
     val loading: Boolean = false,
+    val seekToMs: Long = 0L,          // deep-link target from a search hit
+)
+
+/** Spoken-word search (Phase B). */
+data class SearchState(
+    val query: String = "",
+    val results: List<VideoCloudClient.SearchResult> = emptyList(),
+    val loading: Boolean = false,
 )
 
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
@@ -39,6 +47,10 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _player = MutableStateFlow(PlayerState())
     val player: StateFlow<PlayerState> = _player.asStateFlow()
+
+    private val _search = MutableStateFlow(SearchState())
+    val search: StateFlow<SearchState> = _search.asStateFlow()
+    private var searchJob: Job? = null
 
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
@@ -105,6 +117,33 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
             val detail = sync.videoDetail(v.id) ?: v
             _player.value = PlayerState(video = detail, loading = false)
         }
+    }
+
+    /** Open from a search hit, deep-linking to the spoken moment. */
+    fun openSearchResult(id: String, startSec: Double) {
+        _player.value = PlayerState(video = null, loading = true, seekToMs = (startSec * 1000).toLong())
+        viewModelScope.launch {
+            val detail = sync.videoDetail(id)
+            _player.value = PlayerState(video = detail, loading = false, seekToMs = (startSec * 1000).toLong())
+        }
+    }
+
+    /** Debounced spoken-word search. */
+    fun setQuery(q: String) {
+        _search.value = _search.value.copy(query = q)
+        searchJob?.cancel()
+        if (q.isBlank()) { _search.value = _search.value.copy(results = emptyList(), loading = false); return }
+        searchJob = viewModelScope.launch {
+            delay(300)
+            _search.value = _search.value.copy(loading = true)
+            val res = sync.search(q)
+            _search.value = _search.value.copy(results = res, loading = false)
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _search.value = SearchState()
     }
 
     fun closePlayer() {

@@ -66,6 +66,15 @@ class VideoCloudClient(
         val audioCodec: String?,
         val hasAudio: Boolean,
         val isHdr: Boolean,
+        // Speech → text (Phase A/B) + AI layer (Phase C).
+        val spokenLanguage: String?,      // en/fr/sv (null until transcribed)
+        val transcriptStatus: String?,    // pending|running|ready|no_speech|failed
+        val captionsUrl: String?,         // absolute WebVTT url (detail only, when ready)
+        val aiTitle: String?,
+        val aiSummary: String?,
+        val aiTags: List<String>,
+        val aiChapters: List<Chapter>,
+        val enrichStatus: String?,
         val bytes: Long?,
         val thumbUrl: String?,            // absolute (prefixed) or null
         val hlsUrl: String?,              // absolute (prefixed) or null (detail only, when ready)
@@ -73,6 +82,8 @@ class VideoCloudClient(
         val createdAt: String?,
         val error: String?,
     ) {
+        /** A human-facing title: the AI title if we have one, else the raw filename. */
+        val displayTitle: String get() = aiTitle?.takeUnless { it.isBlank() } ?: filename
         /** Display width, falling back to coded width. */
         val dispW: Int? get() = displayWidth ?: width
         /** Display height, falling back to coded height. */
@@ -85,6 +96,19 @@ class VideoCloudClient(
             }
         val isPortrait: Boolean get() = (dispH ?: 0) > (dispW ?: 0)
     }
+
+    /** A chapter marker from the AI layer. */
+    data class Chapter(val start: Double, val title: String)
+
+    /** One hit from `GET /api/search` — a video + the best spoken segment + timestamp. */
+    data class SearchResult(
+        val id: String,
+        val title: String,
+        val language: String?,
+        val thumbUrl: String?,
+        val matchStart: Double,        // seconds — deep-link the player here
+        val matchText: String?,
+    )
 
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
@@ -218,6 +242,14 @@ class VideoCloudClient(
         audioCodec = o.strOrNull("audio_codec"),
         hasAudio = o.optBoolean("has_audio", false),
         isHdr = o.optBoolean("is_hdr", false),
+        spokenLanguage = o.strOrNull("spoken_language"),
+        transcriptStatus = o.strOrNull("transcript_status"),
+        captionsUrl = abs(o.strOrNull("captions_url")),
+        aiTitle = o.strOrNull("ai_title"),
+        aiSummary = o.strOrNull("ai_summary"),
+        aiTags = strList(o, "ai_tags"),
+        aiChapters = chapterList(o, "ai_chapters"),
+        enrichStatus = o.strOrNull("enrich_status"),
         bytes = o.longOrNull("bytes"),
         thumbUrl = abs(o.strOrNull("thumb_url")),
         hlsUrl = abs(o.strOrNull("hls_url")),
@@ -225,6 +257,47 @@ class VideoCloudClient(
         createdAt = o.strOrNull("created_at"),
         error = o.strOrNull("error"),
     )
+
+    /** Spoken-word search -> `GET /api/search?q=`. Empty on failure/blank. */
+    suspend fun search(apiKey: String, query: String): List<SearchResult> = withContext(Dispatchers.IO) {
+        val q = query.trim()
+        if (q.isEmpty()) return@withContext emptyList()
+        try {
+            val enc = java.net.URLEncoder.encode(q, "UTF-8")
+            client.newCall(req(apiKey, "/api/search?q=$enc").get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val arr = runCatching { JSONObject(raw).optJSONArray("results") }.getOrNull()
+                    ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { o ->
+                    val m = o.optJSONObject("match")
+                    SearchResult(
+                        id = o.optString("id"),
+                        title = o.optString("title").ifBlank { "video" },
+                        language = o.strOrNull("language"),
+                        thumbUrl = abs(o.strOrNull("thumb_url")),
+                        matchStart = m?.optDouble("start", 0.0) ?: 0.0,
+                        matchText = m?.let { it.optString("text").takeUnless { s -> s.isBlank() } },
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "search failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun strList(o: JSONObject, k: String): List<String> {
+        val arr = if (o.isNull(k)) null else o.optJSONArray(k) ?: return emptyList()
+        return (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optString(it)?.takeUnless { s -> s.isBlank() } }
+    }
+
+    private fun chapterList(o: JSONObject, k: String): List<Chapter> {
+        val arr = if (o.isNull(k)) null else o.optJSONArray(k) ?: return emptyList()
+        return (0 until (arr?.length() ?: 0)).mapNotNull { i ->
+            arr?.optJSONObject(i)?.let { Chapter(it.optDouble("start", 0.0), it.optString("title")) }
+        }
+    }
 
     private fun JSONObject.strOrNull(k: String): String? =
         if (isNull(k)) null else optString(k).takeUnless { it.isBlank() || it == "null" }
