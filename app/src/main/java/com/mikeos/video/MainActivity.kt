@@ -48,6 +48,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlayArrow
@@ -153,7 +155,12 @@ class MainActivity : ComponentActivity() {
                         onOpen = { vm.openVideo(it) },
                     )
                 } else {
-                    PlayerScreen(state = player, onBack = { vm.closePlayer() })
+                    PlayerScreen(
+                        state = player,
+                        onBack = { vm.closePlayer() },
+                        onLike = { id, liked, cb -> vm.toggleLike(id, liked, cb) },
+                        onProgress = { id, pos, dur -> vm.saveProgress(id, pos, dur) },
+                    )
                     BackHandler { vm.closePlayer() }
                 }
             }
@@ -641,7 +648,12 @@ private fun StatusChip(status: String, modifier: Modifier = Modifier) {
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
+private fun PlayerScreen(
+    state: PlayerState,
+    onBack: () -> Unit,
+    onLike: (String, Boolean, (Boolean, Int) -> Unit) -> Unit = { _, _, _ -> },
+    onProgress: (String, Double, Double?) -> Unit = { _, _, _ -> },
+) {
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -704,16 +716,26 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
                     .build().apply {
                         setMediaItem(itemB.build())
                         prepare()
-                        if (state.seekToMs > 0) seekTo(state.seekToMs)   // deep-link from search
+                        // deep-link from search, else resume from saved watch position
+                        if (state.seekToMs > 0) seekTo(state.seekToMs)
+                        else v.progressSec?.let { if (it > 5) seekTo((it * 1000).toLong()) }
                         playWhenReady = true
                     }
             }
-            DisposableEffect(exo) { onDispose { exo.release() } }
+            DisposableEffect(exo) {
+                onDispose {
+                    val pos = exo.currentPosition / 1000.0
+                    if (pos > 1) onProgress(v.id, pos, if (exo.duration > 0) exo.duration / 1000.0 else null)
+                    exo.release()
+                }
+            }
 
             var chromeVisible by remember { mutableStateOf(false) }  // start clean; tap to reveal
             var fill by remember { mutableStateOf(false) }          // fit ⇄ zoom(crop-to-fill)
             var landscape by remember { mutableStateOf(false) }
             var infoOpen by remember { mutableStateOf(false) }
+            var liked by remember(v.id) { mutableStateOf(v.liked) }
+            var likes by remember(v.id) { mutableStateOf(v.likes) }
 
             // Full-bleed video surface — RESIZE_MODE_FIT contains any aspect (portrait fills
             // vertically, landscape fills horizontally); no more tiny 16:9 box + black void.
@@ -754,6 +776,9 @@ private fun PlayerScreen(state: PlayerState, onBack: () -> Unit) {
                     v = v,
                     fill = fill,
                     landscape = landscape,
+                    liked = liked,
+                    likes = likes,
+                    onLike = { onLike(v.id, liked) { nl, nc -> liked = nl; likes = nc } },
                     onBack = onBack,
                     onInfo = { infoOpen = true },
                     onToggleFill = { fill = !fill },
@@ -781,6 +806,9 @@ private fun PlayerTopBar(
     v: VideoCloudClient.Video,
     fill: Boolean,
     landscape: Boolean,
+    liked: Boolean,
+    likes: Int,
+    onLike: () -> Unit,
     onBack: () -> Unit,
     onInfo: () -> Unit,
     onToggleFill: () -> Unit,
@@ -806,6 +834,15 @@ private fun PlayerTopBar(
             maxLines = 1,
             modifier = Modifier.weight(1f).padding(start = 4.dp),
         )
+        // Like (👍) with count.
+        Row(verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable { onLike() }
+                .padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Icon(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                contentDescription = "Like", tint = if (liked) MikeAccent else Color.White,
+                modifier = Modifier.size(20.dp))
+            if (likes > 0) Text(" $likes", color = Color.White, fontSize = 13.sp)
+        }
         IconButton(onClick = onToggleFill) {
             Icon(
                 if (fill) Icons.Outlined.Fullscreen else Icons.Outlined.CropFree,

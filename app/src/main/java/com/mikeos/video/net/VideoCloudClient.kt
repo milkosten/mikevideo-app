@@ -75,6 +75,10 @@ class VideoCloudClient(
         val aiTags: List<String>,
         val aiChapters: List<Chapter>,
         val enrichStatus: String?,
+        val viewCount: Long,
+        val likes: Int,
+        val liked: Boolean,
+        val progressSec: Double?,
         val bytes: Long?,
         val thumbUrl: String?,            // absolute (prefixed) or null
         val hlsUrl: String?,              // absolute (prefixed) or null (detail only, when ready)
@@ -225,6 +229,37 @@ class VideoCloudClient(
         }
     }
 
+    /** Count a view (no auth needed). */
+    suspend fun reportView(id: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            client.newCall(Request.Builder().url("$baseUrl/api/videos/$id/view")
+                .post("".toRequestBody(null)).build()).execute().use {}
+        }; Unit
+    }
+
+    /** Like / unlike -> (liked, likes) or null. */
+    suspend fun setLike(apiKey: String, id: String, like: Boolean): Pair<Boolean, Int>? = withContext(Dispatchers.IO) {
+        try {
+            val rb = req(apiKey, "/api/videos/$id/like")
+            val call = if (like) rb.post("".toRequestBody(null)) else rb.delete()
+            client.newCall(call.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val o = JSONObject(resp.body?.string().orEmpty())
+                o.optBoolean("liked", like) to o.optInt("likes", 0)
+            }
+        } catch (e: Exception) { null }
+    }
+
+    /** Save playback position. */
+    suspend fun putProgress(apiKey: String, id: String, posSec: Double, durSec: Double?) = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = JSONObject().put("position_sec", posSec)
+                .apply { if (durSec != null) put("duration_sec", durSec) }
+                .toString().toRequestBody(jsonMedia)
+            client.newCall(req(apiKey, "/api/videos/$id/progress").put(body).build()).execute().use {}
+        }; Unit
+    }
+
     private fun parse(o: JSONObject): Video = Video(
         id = o.optString("id"),
         filename = o.optString("filename").ifBlank { "video.mp4" },
@@ -250,6 +285,10 @@ class VideoCloudClient(
         aiTags = strList(o, "ai_tags"),
         aiChapters = chapterList(o, "ai_chapters"),
         enrichStatus = o.strOrNull("enrich_status"),
+        viewCount = o.longOrNull("view_count") ?: 0L,
+        likes = o.intOrNull("likes") ?: 0,
+        liked = o.optBoolean("liked", false),
+        progressSec = o.numOrNull("progress_sec"),
         bytes = o.longOrNull("bytes"),
         thumbUrl = abs(o.strOrNull("thumb_url")),
         hlsUrl = abs(o.strOrNull("hls_url")),

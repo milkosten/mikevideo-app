@@ -189,6 +189,13 @@ class SyncManager private constructor(private val appContext: Context) {
         return cloud.search(key, query)
     }
 
+    suspend fun reportView(id: String) = cloud.reportView(id)
+    suspend fun setLike(id: String, like: Boolean): Pair<Boolean, Int>? =
+        apiKey()?.let { cloud.setLike(it, id, like) }
+    suspend fun saveProgress(id: String, posSec: Double, durSec: Double?) {
+        apiKey()?.let { cloud.putProgress(it, id, posSec, durSec) }
+    }
+
     // ---- gating -----------------------------------------------------------------------------
 
     private fun unmeteredWifi(): Boolean {

@@ -116,7 +116,20 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val detail = sync.videoDetail(v.id) ?: v
             _player.value = PlayerState(video = detail, loading = false)
+            launch { sync.reportView(v.id) }        // count a view
         }
+    }
+
+    /** Toggle like; returns (liked, likes) applied to the player state. */
+    fun toggleLike(id: String, currentlyLiked: Boolean, onResult: (Boolean, Int) -> Unit) {
+        viewModelScope.launch {
+            val res = sync.setLike(id, !currentlyLiked) ?: return@launch
+            onResult(res.first, res.second)
+        }
+    }
+
+    fun saveProgress(id: String, posSec: Double, durSec: Double?) {
+        viewModelScope.launch { sync.saveProgress(id, posSec, durSec) }
     }
 
     /** Open from a search hit, deep-linking to the spoken moment. */
@@ -125,6 +138,7 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val detail = sync.videoDetail(id)
             _player.value = PlayerState(video = detail, loading = false, seekToMs = (startSec * 1000).toLong())
+            launch { sync.reportView(id) }
         }
     }
 
