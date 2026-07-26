@@ -204,9 +204,14 @@ class VideoCloudClient(
         }
 
     /** `GET /api/feed/subscriptions` — recent public videos from channels you follow. */
-    suspend fun subsFeed(apiKey: String): List<Video> = withContext(Dispatchers.IO) {
+    suspend fun subsFeed(apiKey: String): List<Video> = feedVideos(apiKey, "/api/feed/subscriptions")
+
+    /** `GET /api/feed/home` — the personalized recommendation feed (P6). */
+    suspend fun homeFeed(apiKey: String): List<Video> = feedVideos(apiKey, "/api/feed/home")
+
+    private suspend fun feedVideos(apiKey: String, path: String): List<Video> = withContext(Dispatchers.IO) {
         try {
-            client.newCall(req(apiKey, "/api/feed/subscriptions").get().build()).execute().use { resp ->
+            client.newCall(req(apiKey, path).get().build()).execute().use { resp ->
                 val raw = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) return@withContext emptyList()
                 val arr = runCatching { JSONObject(raw).optJSONArray("videos") }.getOrNull()
@@ -214,7 +219,7 @@ class VideoCloudClient(
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { parse(it) }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "subsFeed failed: ${e.message}")
+            Log.w(TAG, "feed $path failed: ${e.message}")
             emptyList()
         }
     }

@@ -82,6 +82,10 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     private val _subsFeed = MutableStateFlow(SubsFeedState())
     val subsFeed: StateFlow<SubsFeedState> = _subsFeed.asStateFlow()
 
+    // Personalized recommendation feed (P6) — same shape as the subs feed.
+    private val _homeFeed = MutableStateFlow(SubsFeedState())
+    val homeFeed: StateFlow<SubsFeedState> = _homeFeed.asStateFlow()
+
     private val _comments = MutableStateFlow(CommentsState())
     val comments: StateFlow<CommentsState> = _comments.asStateFlow()
 
@@ -237,6 +241,18 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeSubsFeed() {
         _subsFeed.value = SubsFeedState()
+    }
+
+    /** Open / close the recommendation feed (P6). */
+    fun openHomeFeed() {
+        _homeFeed.value = SubsFeedState(open = true, loading = true)
+        viewModelScope.launch {
+            _homeFeed.value = SubsFeedState(open = true, loading = false, videos = sync.homeFeed())
+        }
+    }
+
+    fun closeHomeFeed() {
+        _homeFeed.value = SubsFeedState()
     }
 
     // ---- Comments (P5) ---------------------------------------------------------------

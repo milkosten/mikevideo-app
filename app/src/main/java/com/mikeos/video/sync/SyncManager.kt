@@ -201,6 +201,10 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun subsFeed(): List<VideoCloudClient.Video> =
         apiKey()?.let { cloud.subsFeed(it) } ?: emptyList()
 
+    /** The personalized recommendation feed (P6). */
+    suspend fun homeFeed(): List<VideoCloudClient.Video> =
+        apiKey()?.let { cloud.homeFeed(it) } ?: emptyList()
+
     // Comments (P5)
     suspend fun comments(videoId: String): VideoCloudClient.CommentThread? =
         cloud.comments(apiKey(), videoId)

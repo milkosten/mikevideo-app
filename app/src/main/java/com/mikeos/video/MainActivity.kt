@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.CropFree
@@ -147,6 +148,7 @@ class MainActivity : ComponentActivity() {
                 val searchState by vm.search.collectAsStateWithLifecycle()
                 val channelState by vm.channel.collectAsStateWithLifecycle()
                 val subsFeedState by vm.subsFeed.collectAsStateWithLifecycle()
+                val homeFeedState by vm.homeFeed.collectAsStateWithLifecycle()
                 val commentsState by vm.comments.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
@@ -175,12 +177,24 @@ class MainActivity : ComponentActivity() {
                         BackHandler { vm.closeChannel() }
                     }
                     subsFeedState.open -> {
-                        SubsFeedScreen(
+                        FeedScreen(
+                            title = "SUBSCRIPTIONS",
+                            empty = "No videos yet. Subscribe to a creator to see\ntheir public uploads here.",
                             state = subsFeedState,
                             onBack = { vm.closeSubsFeed() },
                             onOpen = { vm.openVideo(it) },
                         )
                         BackHandler { vm.closeSubsFeed() }
+                    }
+                    homeFeedState.open -> {
+                        FeedScreen(
+                            title = "FOR YOU",
+                            empty = "No recommendations yet. Subscribe to a creator\nor make a video public.",
+                            state = homeFeedState,
+                            onBack = { vm.closeHomeFeed() },
+                            onOpen = { vm.openVideo(it) },
+                        )
+                        BackHandler { vm.closeHomeFeed() }
                     }
                     else -> {
                         LibraryScreen(
@@ -196,6 +210,7 @@ class MainActivity : ComponentActivity() {
                             onWifiOnly = { vm.setWifiOnly(it) },
                             onOpen = { vm.openVideo(it) },
                             onOpenSubs = { vm.openSubsFeed() },
+                            onOpenForYou = { vm.openHomeFeed() },
                         )
                     }
                 }
@@ -283,6 +298,7 @@ private fun LibraryScreen(
     onWifiOnly: (Boolean) -> Unit,
     onOpen: (VideoCloudClient.Video) -> Unit,
     onOpenSubs: () -> Unit = {},
+    onOpenForYou: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -314,6 +330,9 @@ private fun LibraryScreen(
                 }
                 SyncPill(syncing = syncing, onClick = { showSettings = true })
                 Spacer(Modifier.size(4.dp))
+                IconButton(onClick = onOpenForYou) {
+                    Icon(Icons.Filled.Recommend, contentDescription = "For You", tint = MikeMuted)
+                }
                 IconButton(onClick = onOpenSubs) {
                     Icon(Icons.Filled.Subscriptions, contentDescription = "Subscriptions", tint = MikeMuted)
                 }
@@ -1172,9 +1191,11 @@ private fun SubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
     )
 }
 
-/** The subscriptions feed (P4): recent public videos from channels you follow. */
+/** A generic public-video feed screen — used by both Subscriptions (P4) and For You (P6). */
 @Composable
-private fun SubsFeedScreen(
+private fun FeedScreen(
+    title: String,
+    empty: String,
     state: SubsFeedState,
     onBack: () -> Unit,
     onOpen: (VideoCloudClient.Video) -> Unit,
@@ -1188,7 +1209,7 @@ private fun SubsFeedScreen(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
                 }
-                Text("SUBSCRIPTIONS", color = MikeMuted, fontSize = 12.sp,
+                Text(title, color = MikeMuted, fontSize = 12.sp,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             }
             Spacer(Modifier.height(10.dp))
@@ -1198,7 +1219,7 @@ private fun SubsFeedScreen(
                 }
                 state.videos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        "No videos yet. Subscribe to a creator to see\ntheir public uploads here.",
+                        empty,
                         color = MikeMuted, fontSize = 14.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
