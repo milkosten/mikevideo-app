@@ -42,6 +42,15 @@ data class ChannelState(
     val handle: String = "",
     val loading: Boolean = false,
     val page: VideoCloudClient.ChannelPage? = null,
+    val subscribed: Boolean = false,
+    val subscriberCount: Int = 0,
+)
+
+/** The subscriptions feed (P4). [open] => show the screen. */
+data class SubsFeedState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val videos: List<VideoCloudClient.Video> = emptyList(),
 )
 
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
@@ -61,6 +70,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _channel = MutableStateFlow(ChannelState())
     val channel: StateFlow<ChannelState> = _channel.asStateFlow()
+
+    private val _subsFeed = MutableStateFlow(SubsFeedState())
+    val subsFeed: StateFlow<SubsFeedState> = _subsFeed.asStateFlow()
 
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
@@ -183,12 +195,37 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         _channel.value = ChannelState(handle = handle, loading = true)
         viewModelScope.launch {
             val page = sync.channel(handle)
-            _channel.value = ChannelState(handle = handle, loading = false, page = page)
+            _channel.value = ChannelState(
+                handle = handle, loading = false, page = page,
+                subscribed = page?.subscribed ?: false,
+                subscriberCount = page?.channel?.subscriberCount ?: 0,
+            )
+        }
+    }
+
+    /** Subscribe/unsubscribe on the open channel; optimistic count update. */
+    fun toggleSubscribe(handle: String) {
+        val cur = _channel.value
+        viewModelScope.launch {
+            val res = sync.setSubscribe(handle, !cur.subscribed) ?: return@launch
+            _channel.value = _channel.value.copy(subscribed = res.first, subscriberCount = res.second)
         }
     }
 
     fun closeChannel() {
         _channel.value = ChannelState()
+    }
+
+    /** Open / close the subscriptions feed (P4). */
+    fun openSubsFeed() {
+        _subsFeed.value = SubsFeedState(open = true, loading = true)
+        viewModelScope.launch {
+            _subsFeed.value = SubsFeedState(open = true, loading = false, videos = sync.subsFeed())
+        }
+    }
+
+    fun closeSubsFeed() {
+        _subsFeed.value = SubsFeedState()
     }
 
     /** Set the library zoom level (column count), clamped and persisted. */

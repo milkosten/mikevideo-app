@@ -118,7 +118,7 @@ class VideoCloudClient(
         val matchText: String?,
     )
 
-    /** A public creator profile (P3). */
+    /** A public creator profile (P3/P4). */
     data class Channel(
         val handle: String,
         val displayName: String,
@@ -126,10 +126,16 @@ class VideoCloudClient(
         val avatarUrl: String?,
         val videoCount: Int,
         val totalViews: Long,
+        val subscriberCount: Int,
     )
 
-    /** A channel page: the profile + its public videos. */
-    data class ChannelPage(val channel: Channel, val videos: List<Video>, val isMe: Boolean)
+    /** A channel page: the profile + its public videos + the viewer's sub state (P4). */
+    data class ChannelPage(
+        val channel: Channel,
+        val videos: List<Video>,
+        val isMe: Boolean,
+        val subscribed: Boolean,
+    )
 
     /**
      * `GET /api/channels/{handle}` — a creator's public profile + their public videos.
@@ -159,14 +165,57 @@ class VideoCloudClient(
                         avatarUrl = abs(c.strOrNull("avatar_url")),
                         videoCount = stats?.intOrNull("video_count") ?: vids.size,
                         totalViews = stats?.longOrNull("total_views") ?: 0L,
+                        subscriberCount = stats?.intOrNull("subscriber_count") ?: 0,
                     ),
                     videos = vids,
                     isMe = o.optBoolean("is_me", false),
+                    subscribed = o.optBoolean("subscribed", false),
                 )
             }
         } catch (e: Exception) {
             Log.w(TAG, "getChannel failed: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * Subscribe / unsubscribe to a channel (P4). `POST`/`DELETE
+     * /api/channels/{handle}/subscribe`. Returns (subscribed, subscriberCount) or null.
+     */
+    suspend fun subscribe(apiKey: String, handle: String, on: Boolean): Pair<Boolean, Int>? =
+        withContext(Dispatchers.IO) {
+            val h = handle.trim().removePrefix("@")
+            if (h.isEmpty()) return@withContext null
+            try {
+                val enc = java.net.URLEncoder.encode(h, "UTF-8")
+                val b = req(apiKey, "/api/channels/$enc/subscribe")
+                val rb = "".toRequestBody(jsonMedia)
+                val call = if (on) b.post(rb) else b.delete(rb)
+                client.newCall(call.build()).execute().use { resp ->
+                    val raw = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) return@withContext null
+                    val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                    (o.optBoolean("subscribed", on)) to (o.intOrNull("subscriber_count") ?: 0)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "subscribe failed: ${e.message}")
+                null
+            }
+        }
+
+    /** `GET /api/feed/subscriptions` — recent public videos from channels you follow. */
+    suspend fun subsFeed(apiKey: String): List<Video> = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(req(apiKey, "/api/feed/subscriptions").get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val arr = runCatching { JSONObject(raw).optJSONArray("videos") }.getOrNull()
+                    ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { parse(it) }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "subsFeed failed: ${e.message}")
+            emptyList()
         }
     }
 

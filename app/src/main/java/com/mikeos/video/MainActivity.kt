@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.Fullscreen
@@ -144,6 +145,7 @@ class MainActivity : ComponentActivity() {
                 val columns by vm.gridColumns.collectAsStateWithLifecycle()
                 val searchState by vm.search.collectAsStateWithLifecycle()
                 val channelState by vm.channel.collectAsStateWithLifecycle()
+                val subsFeedState by vm.subsFeed.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -165,8 +167,17 @@ class MainActivity : ComponentActivity() {
                             state = channelState,
                             onBack = { vm.closeChannel() },
                             onOpen = { vm.openVideo(it) },
+                            onSubscribe = { h -> vm.toggleSubscribe(h) },
                         )
                         BackHandler { vm.closeChannel() }
+                    }
+                    subsFeedState.open -> {
+                        SubsFeedScreen(
+                            state = subsFeedState,
+                            onBack = { vm.closeSubsFeed() },
+                            onOpen = { vm.openVideo(it) },
+                        )
+                        BackHandler { vm.closeSubsFeed() }
                     }
                     else -> {
                         LibraryScreen(
@@ -181,6 +192,7 @@ class MainActivity : ComponentActivity() {
                             onAutoSync = { vm.setAutoSync(it) },
                             onWifiOnly = { vm.setWifiOnly(it) },
                             onOpen = { vm.openVideo(it) },
+                            onOpenSubs = { vm.openSubsFeed() },
                         )
                     }
                 }
@@ -256,6 +268,7 @@ private fun LibraryScreen(
     onAutoSync: (Boolean) -> Unit,
     onWifiOnly: (Boolean) -> Unit,
     onOpen: (VideoCloudClient.Video) -> Unit,
+    onOpenSubs: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -287,6 +300,9 @@ private fun LibraryScreen(
                 }
                 SyncPill(syncing = syncing, onClick = { showSettings = true })
                 Spacer(Modifier.size(4.dp))
+                IconButton(onClick = onOpenSubs) {
+                    Icon(Icons.Filled.Subscriptions, contentDescription = "Subscriptions", tint = MikeMuted)
+                }
                 IconButton(onClick = { showSettings = true }) {
                     Icon(Icons.Filled.Tune, contentDescription = "Settings", tint = MikeMuted)
                 }
@@ -1045,12 +1061,13 @@ private fun ChannelAvatar(name: String, avatarUrl: String?, size: Dp) {
     }
 }
 
-/** A creator's public channel: profile header + their public videos (P3). */
+/** A creator's public channel: profile header + subscribe + their videos (P3/P4). */
 @Composable
 private fun ChannelScreen(
     state: ChannelState,
     onBack: () -> Unit,
     onOpen: (VideoCloudClient.Video) -> Unit,
+    onSubscribe: (String) -> Unit = {},
 ) {
     Scaffold(containerColor = MikeBg) { pad ->
         Column(
@@ -1082,14 +1099,19 @@ private fun ChannelScreen(
                             Text(c.displayName, color = MikeOnSurface, fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold, maxLines = 2)
                             Text("@${c.handle}", color = MikeMuted, fontSize = 13.sp)
+                            val subs = "${state.subscriberCount} subscriber${if (state.subscriberCount == 1) "" else "s"}"
                             val vs = "${c.videoCount} video${if (c.videoCount == 1) "" else "s"}"
-                            val ws = "${c.totalViews} view${if (c.totalViews == 1L) "" else "s"}"
-                            Text("$vs · $ws", color = MikeMuted, fontSize = 12.5.sp)
+                            Text("$subs · $vs · ${c.totalViews} view${if (c.totalViews == 1L) "" else "s"}",
+                                color = MikeMuted, fontSize = 12.5.sp)
                         }
                     }
                     if (!c.bio.isNullOrBlank()) {
                         Spacer(Modifier.height(12.dp))
                         Text(c.bio, color = MikeOnSurface, fontSize = 13.5.sp, lineHeight = 19.sp)
+                    }
+                    if (!page.isMe) {
+                        Spacer(Modifier.height(14.dp))
+                        SubscribeButton(subscribed = state.subscribed, onClick = { onSubscribe(c.handle) })
                     }
                     Spacer(Modifier.height(18.dp))
                     if (page.videos.isEmpty()) {
@@ -1106,6 +1128,68 @@ private fun ChannelScreen(
                             items(page.videos, key = { it.id }) { v -> VideoCard(v, 2, onOpen) }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/** YouTube-style Subscribe / Subscribed pill (P4). */
+@Composable
+private fun SubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
+    val bg = if (subscribed) MikeSurfaceVariant else MikeOnSurface
+    val fg = if (subscribed) MikeMuted else MikeBg
+    Text(
+        if (subscribed) "Subscribed ✓" else "Subscribe",
+        color = fg,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+    )
+}
+
+/** The subscriptions feed (P4): recent public videos from channels you follow. */
+@Composable
+private fun SubsFeedScreen(
+    state: SubsFeedState,
+    onBack: () -> Unit,
+    onOpen: (VideoCloudClient.Video) -> Unit,
+) {
+    Scaffold(containerColor = MikeBg) { pad ->
+        Column(
+            Modifier.fillMaxSize().padding(pad).padding(horizontal = 14.dp).statusBarsPadding(),
+        ) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
+                }
+                Text("SUBSCRIPTIONS", color = MikeMuted, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+            when {
+                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                state.videos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No videos yet. Subscribe to a creator to see\ntheir public uploads here.",
+                        color = MikeMuted, fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
+                else -> LazyVerticalStaggeredGrid(
+                    columns = StaggeredGridCells.Fixed(2),
+                    verticalItemSpacing = 10.dp,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(state.videos, key = { it.id }) { v -> VideoCard(v, 2, onOpen) }
                 }
             }
         }

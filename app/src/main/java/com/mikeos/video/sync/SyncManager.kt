@@ -193,6 +193,14 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun channel(handle: String): VideoCloudClient.ChannelPage? =
         cloud.getChannel(apiKey(), handle)
 
+    /** Subscribe/unsubscribe (P4) -> (subscribed, subscriberCount). */
+    suspend fun setSubscribe(handle: String, on: Boolean): Pair<Boolean, Int>? =
+        apiKey()?.let { cloud.subscribe(it, handle, on) }
+
+    /** Recent public videos from channels the user follows (P4). */
+    suspend fun subsFeed(): List<VideoCloudClient.Video> =
+        apiKey()?.let { cloud.subsFeed(it) } ?: emptyList()
+
     suspend fun reportView(id: String) = cloud.reportView(id)
     suspend fun setLike(id: String, like: Boolean): Pair<Boolean, Int>? =
         apiKey()?.let { cloud.setLike(it, id, like) }
