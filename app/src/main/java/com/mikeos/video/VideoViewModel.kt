@@ -28,6 +28,7 @@ data class PlayerState(
     val video: VideoCloudClient.Video? = null,
     val loading: Boolean = false,
     val seekToMs: Long = 0L,          // deep-link target from a search hit
+    val related: List<VideoCloudClient.Video> = emptyList(),   // P7 up-next
 )
 
 /** Spoken-word search (Phase B). */
@@ -147,14 +148,29 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         _library.value = _library.value.copy(wifiOnly = on)
     }
 
+    // Autoplay-next preference (P7), persisted; default ON.
+    private val _autoplay = MutableStateFlow(prefs.getBoolean(KEY_AUTOPLAY, true))
+    val autoplay: StateFlow<Boolean> = _autoplay.asStateFlow()
+    fun setAutoplay(on: Boolean) {
+        _autoplay.value = on
+        prefs.edit().putBoolean(KEY_AUTOPLAY, on).apply()
+    }
+
     /** Open a video: fetch its detail (HLS master url) before showing the player. */
     fun openVideo(v: VideoCloudClient.Video) {
         _player.value = PlayerState(video = v, loading = true)
         viewModelScope.launch {
             val detail = sync.videoDetail(v.id) ?: v
-            _player.value = PlayerState(video = detail, loading = false)
+            _player.value = _player.value.copy(video = detail, loading = false)
             launch { sync.reportView(v.id) }        // count a view
+            launch { val rel = sync.related(v.id); _player.value = _player.value.copy(related = rel) }
         }
+    }
+
+    /** When a video ends: if autoplay is on, open the top related video (P7). */
+    fun playNextIfAuto() {
+        if (!_autoplay.value) return
+        _player.value.related.firstOrNull()?.let { openVideo(it) }
     }
 
     /** Toggle like; returns (liked, likes) applied to the player state. */
@@ -180,6 +196,7 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
             val detail = sync.videoDetail(id)
             _player.value = PlayerState(video = detail, loading = false, seekToMs = (startSec * 1000).toLong())
             launch { sync.reportView(id) }
+            launch { val rel = sync.related(id); _player.value = _player.value.copy(related = rel) }
         }
     }
 
@@ -303,5 +320,6 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         const val MIN_COLUMNS = 2
         const val MAX_COLUMNS = 4
         private const val KEY_COLUMNS = "grid_columns"
+        private const val KEY_AUTOPLAY = "autoplay_next"
     }
 }

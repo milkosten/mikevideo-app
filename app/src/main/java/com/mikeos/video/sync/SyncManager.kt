@@ -205,6 +205,10 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun homeFeed(): List<VideoCloudClient.Video> =
         apiKey()?.let { cloud.homeFeed(it) } ?: emptyList()
 
+    /** Related / up-next videos for a given video (P7). */
+    suspend fun related(videoId: String): List<VideoCloudClient.Video> =
+        cloud.related(apiKey(), videoId)
+
     // Comments (P5)
     suspend fun comments(videoId: String): VideoCloudClient.CommentThread? =
         cloud.comments(apiKey(), videoId)

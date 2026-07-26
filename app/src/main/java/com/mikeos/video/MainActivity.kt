@@ -106,6 +106,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -150,6 +151,7 @@ class MainActivity : ComponentActivity() {
                 val subsFeedState by vm.subsFeed.collectAsStateWithLifecycle()
                 val homeFeedState by vm.homeFeed.collectAsStateWithLifecycle()
                 val commentsState by vm.comments.collectAsStateWithLifecycle()
+                val autoplay by vm.autoplay.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -164,6 +166,10 @@ class MainActivity : ComponentActivity() {
                             onSave = { id, cb -> vm.saveToWatchLater(id, cb) },
                             onOpenChannel = { h -> vm.closePlayer(); vm.openChannel(h) },
                             onOpenComments = { id -> vm.openComments(id) },
+                            autoplay = autoplay,
+                            onToggleAutoplay = { vm.setAutoplay(it) },
+                            onEnded = { vm.playNextIfAuto() },
+                            onOpenRelated = { vm.openVideo(it) },
                         )
                         BackHandler { vm.closePlayer() }
                     }
@@ -726,6 +732,10 @@ private fun PlayerScreen(
     onSave: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
     onOpenChannel: (String) -> Unit = {},
     onOpenComments: (String) -> Unit = {},
+    autoplay: Boolean = true,
+    onToggleAutoplay: (Boolean) -> Unit = {},
+    onEnded: () -> Unit = {},
+    onOpenRelated: (VideoCloudClient.Video) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -795,8 +805,18 @@ private fun PlayerScreen(
                         playWhenReady = true
                     }
             }
+            val currentOnEnded by rememberUpdatedState(onEnded)
             DisposableEffect(exo) {
+                // Autoplay-next (P7): fire onEnded when playback finishes. This only
+                // observes state — it never alters the media source / decode path.
+                val listener = object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) currentOnEnded()
+                    }
+                }
+                exo.addListener(listener)
                 onDispose {
+                    exo.removeListener(listener)
                     val pos = exo.currentPosition / 1000.0
                     if (pos > 1) onProgress(v.id, pos, if (exo.duration > 0) exo.duration / 1000.0 else null)
                     exo.release()
@@ -870,6 +890,10 @@ private fun PlayerScreen(
             // Details, on demand only — the video stays clean until you ask for them.
             if (infoOpen) VideoInfoOverlay(
                 v = v,
+                related = state.related,
+                autoplay = autoplay,
+                onToggleAutoplay = onToggleAutoplay,
+                onOpenRelated = { infoOpen = false; onOpenRelated(it) },
                 onSeek = { ms -> exo.seekTo(ms); exo.play(); infoOpen = false },
                 onClose = { infoOpen = false },
                 onOpenChannel = { h -> infoOpen = false; onOpenChannel(h) },
@@ -953,6 +977,10 @@ private fun PlayerTopBar(
 @Composable
 private fun VideoInfoOverlay(
     v: VideoCloudClient.Video,
+    related: List<VideoCloudClient.Video> = emptyList(),
+    autoplay: Boolean = true,
+    onToggleAutoplay: (Boolean) -> Unit = {},
+    onOpenRelated: (VideoCloudClient.Video) -> Unit = {},
     onSeek: (Long) -> Unit,
     onClose: () -> Unit,
     onOpenChannel: (String) -> Unit = {},
@@ -1050,6 +1078,45 @@ private fun VideoInfoOverlay(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+            }
+
+            // Up next (P7) — related videos + the autoplay toggle.
+            if (related.isNotEmpty()) {
+                val ctx = LocalContext.current
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Up next", color = MikeOnSurface, fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text("Autoplay", color = MikeMuted, fontSize = 12.5.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Switch(checked = autoplay, onCheckedChange = onToggleAutoplay,
+                        colors = SwitchDefaults.colors(checkedTrackColor = MikeAccent, checkedThumbColor = Color.White))
+                }
+                Spacer(Modifier.height(6.dp))
+                related.take(8).forEach { rv ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .clickable { onOpenRelated(rv) }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(width = 100.dp, height = 56.dp).clip(RoundedCornerShape(8.dp))
+                            .background(MikeBg), contentAlignment = Alignment.Center) {
+                            if (rv.thumbUrl != null) AsyncImage(
+                                model = ImageRequest.Builder(ctx).data(rv.thumbUrl).crossfade(true).build(),
+                                imageLoader = VideoImages.loader(ctx), contentDescription = null,
+                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            else Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(rv.aiTitle?.takeUnless { it.isBlank() } ?: friendlyDate(rv.takenAt ?: rv.createdAt),
+                                color = MikeOnSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                            val sub = listOfNotNull(rv.channelName, fmtDuration(rv.durationSec).takeIf { it.isNotEmpty() })
+                                .joinToString(" · ")
+                            if (sub.isNotEmpty()) Text(sub, color = MikeMuted, fontSize = 11.5.sp, maxLines = 1)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
             }
 
             Text("Information", color = MikeOnSurface, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)

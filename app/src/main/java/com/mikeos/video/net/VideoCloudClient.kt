@@ -209,6 +209,20 @@ class VideoCloudClient(
     /** `GET /api/feed/home` — the personalized recommendation feed (P6). */
     suspend fun homeFeed(apiKey: String): List<Video> = feedVideos(apiKey, "/api/feed/home")
 
+    /** `GET /api/videos/{id}/related` — the up-next rail (P7). Key sent when present. */
+    suspend fun related(apiKey: String?, videoId: String): List<Video> = withContext(Dispatchers.IO) {
+        try {
+            val b = Request.Builder().url("$baseUrl/api/videos/$videoId/related").header("Accept", "application/json")
+            if (!apiKey.isNullOrBlank()) b.header("X-API-KEY", apiKey)
+            client.newCall(b.get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val arr = runCatching { JSONObject(raw).optJSONArray("videos") }.getOrNull() ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { parse(it) }
+            }
+        } catch (e: Exception) { Log.w(TAG, "related failed: ${e.message}"); emptyList() }
+    }
+
     private suspend fun feedVideos(apiKey: String, path: String): List<Video> = withContext(Dispatchers.IO) {
         try {
             client.newCall(req(apiKey, path).get().build()).execute().use { resp ->
