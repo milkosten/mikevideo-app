@@ -9,6 +9,9 @@ import com.mikeos.core.agent.MikeAgent
 import com.mikeos.core.hive.HiveIdentity
 import com.mikeos.video.BuildConfig
 import com.mikeos.video.net.VideoCloudClient
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
@@ -151,7 +154,29 @@ class SyncManager private constructor(private val appContext: Context) {
     /** Library from the cloud for the UI grid. */
     suspend fun library(): List<VideoCloudClient.Video> {
         val key = apiKey() ?: return emptyList()
-        return cloud.listVideos(key)
+        val vids = cloud.listVideos(key)
+        if (vids.isNotEmpty()) _library.value = vids
+        return vids
+    }
+
+    /**
+     * Resident, cross-device library list (metadata only: id/title/status/HLS urls —
+     * never the media bytes). Kept warm by [refreshLibrary] on every heartbeat so clips
+     * Mike shot on his OTHER device are already present when he opens the app.
+     */
+    private val _library = MutableStateFlow<List<VideoCloudClient.Video>>(emptyList())
+    val libraryState: StateFlow<List<VideoCloudClient.Video>> = _library.asStateFlow()
+
+    /**
+     * CROSS-DEVICE SYNC (Phase 1): pull the user-scoped video library LIST from the cloud
+     * into the resident [libraryState] every beat. This fetches metadata only (the same
+     * `/api/videos` the UI grid uses) — it does NOT download any video bytes. Best-effort.
+     */
+    suspend fun refreshLibrary() {
+        val key = apiKey() ?: return
+        val vids = runCatching { cloud.listVideos(key) }.getOrNull() ?: return
+        // Never trust an empty result as a real refresh — only replace when we got rows.
+        if (vids.isNotEmpty()) _library.value = vids
     }
 
     suspend fun videoDetail(id: String): VideoCloudClient.Video? {

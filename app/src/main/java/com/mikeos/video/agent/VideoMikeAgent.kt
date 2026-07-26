@@ -67,6 +67,12 @@ object VideoMikeAgent {
             "MikeVideo auto-sync: $line"
         }
 
+        // CROSS-DEVICE SYNC (Phase 1): every beat, pull the user-scoped video library LIST
+        // (metadata only — titles + status + HLS urls, never the media bytes) from the cloud
+        // into the resident SyncManager state, so clips Mike shot on his OTHER device are
+        // already present here live (not only when the grid re-fetches on app-open).
+        HeartbeatService.syncProvider = { SyncManager.get(app).refreshLibrary() }
+
         bg.launch {
             runCatching {
                 MikeAgent.install(

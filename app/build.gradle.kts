@@ -14,7 +14,7 @@ android {
         applicationId = "com.mikeos.video"
         minSdk = 31
         targetSdk = 35
-        versionCode = 3
+        versionCode = 4
         versionName = "0.3.0"
 
         // MikeDaemon runs ON the phone (loopback). Auth token is pinned for dev.
