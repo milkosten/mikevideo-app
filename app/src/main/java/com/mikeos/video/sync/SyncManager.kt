@@ -201,6 +201,18 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun subsFeed(): List<VideoCloudClient.Video> =
         apiKey()?.let { cloud.subsFeed(it) } ?: emptyList()
 
+    // Comments (P5)
+    suspend fun comments(videoId: String): VideoCloudClient.CommentThread? =
+        cloud.comments(apiKey(), videoId)
+    suspend fun postComment(videoId: String, body: String, parentId: String?): Boolean =
+        apiKey()?.let { cloud.postComment(it, videoId, body, parentId) } ?: false
+    suspend fun deleteComment(commentId: String): Boolean =
+        apiKey()?.let { cloud.deleteComment(it, commentId) } ?: false
+    suspend fun likeComment(commentId: String, on: Boolean): Pair<Boolean, Int>? =
+        apiKey()?.let { cloud.likeComment(it, commentId, on) }
+    suspend fun heartComment(commentId: String, on: Boolean): Boolean =
+        apiKey()?.let { cloud.heartComment(it, commentId, on) } ?: false
+
     suspend fun reportView(id: String) = cloud.reportView(id)
     suspend fun setLike(id: String, like: Boolean): Pair<Boolean, Int>? =
         apiKey()?.let { cloud.setLike(it, id, like) }

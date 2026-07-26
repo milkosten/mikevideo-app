@@ -219,6 +219,110 @@ class VideoCloudClient(
         }
     }
 
+    /** A comment (P5) — one reply level; [replies] populated only on top-level. */
+    data class Comment(
+        val id: String,
+        val parentId: String?,
+        val body: String,
+        val hearted: Boolean,
+        val likeCount: Int,
+        val liked: Boolean,
+        val authorName: String,
+        val authorHandle: String?,
+        val authorAvatar: String?,
+        val createdAt: String?,
+        val canDelete: Boolean,
+        val isAuthor: Boolean,
+        val replies: List<Comment>,
+    )
+
+    /** The comment thread for a video + the viewer's posting permissions. */
+    data class CommentThread(
+        val count: Int,
+        val canComment: Boolean,
+        val isOwner: Boolean,
+        val comments: List<Comment>,
+    )
+
+    private fun parseComment(o: JSONObject): Comment {
+        val a = o.optJSONObject("author")
+        val rarr = o.optJSONArray("replies")
+        return Comment(
+            id = o.optString("id"),
+            parentId = o.strOrNull("parent_id"),
+            body = o.optString("body"),
+            hearted = o.optBoolean("hearted", false),
+            likeCount = o.intOrNull("like_count") ?: 0,
+            liked = o.optBoolean("liked", false),
+            authorName = a?.strOrNull("display_name") ?: ("@" + (a?.strOrNull("handle") ?: "user")),
+            authorHandle = a?.strOrNull("handle"),
+            authorAvatar = abs(a?.strOrNull("avatar_url")),
+            createdAt = o.strOrNull("created_at"),
+            canDelete = o.optBoolean("can_delete", false),
+            isAuthor = o.optBoolean("is_author", false),
+            replies = (0 until (rarr?.length() ?: 0)).mapNotNull { rarr?.optJSONObject(it) }.map { parseComment(it) },
+        )
+    }
+
+    /** `GET /api/videos/{id}/comments`. Public endpoint; key sent when present. */
+    suspend fun comments(apiKey: String?, videoId: String): CommentThread? = withContext(Dispatchers.IO) {
+        try {
+            val b = Request.Builder().url("$baseUrl/api/videos/$videoId/comments").header("Accept", "application/json")
+            if (!apiKey.isNullOrBlank()) b.header("X-API-KEY", apiKey)
+            client.newCall(b.get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext null
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                val arr = o.optJSONArray("comments")
+                CommentThread(
+                    count = o.intOrNull("count") ?: 0,
+                    canComment = o.optBoolean("can_comment", false),
+                    isOwner = o.optBoolean("is_owner", false),
+                    comments = (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optJSONObject(it) }.map { parseComment(it) },
+                )
+            }
+        } catch (e: Exception) { Log.w(TAG, "comments failed: ${e.message}"); null }
+    }
+
+    /** `POST /api/videos/{id}/comments {body, parent_id?}`. */
+    suspend fun postComment(apiKey: String, videoId: String, body: String, parentId: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject().put("body", body).apply { if (parentId != null) put("parent_id", parentId) }
+                client.newCall(req(apiKey, "/api/videos/$videoId/comments")
+                    .post(payload.toString().toRequestBody(jsonMedia)).build()).execute().use { it.isSuccessful }
+            } catch (e: Exception) { Log.w(TAG, "postComment failed: ${e.message}"); false }
+        }
+
+    suspend fun deleteComment(apiKey: String, commentId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(req(apiKey, "/api/comments/$commentId").delete().build()).execute().use { it.isSuccessful }
+        } catch (e: Exception) { Log.w(TAG, "deleteComment failed: ${e.message}"); false }
+    }
+
+    /** Like/unlike a comment -> (liked, likeCount). */
+    suspend fun likeComment(apiKey: String, commentId: String, on: Boolean): Pair<Boolean, Int>? =
+        withContext(Dispatchers.IO) {
+            try {
+                val b = req(apiKey, "/api/comments/$commentId/like")
+                val rb = "".toRequestBody(jsonMedia)
+                client.newCall((if (on) b.post(rb) else b.delete(rb)).build()).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val o = JSONObject(resp.body?.string().orEmpty())
+                    o.optBoolean("liked", on) to (o.intOrNull("like_count") ?: 0)
+                }
+            } catch (e: Exception) { Log.w(TAG, "likeComment failed: ${e.message}"); null }
+        }
+
+    /** Owner heart / unheart a comment. */
+    suspend fun heartComment(apiKey: String, commentId: String, on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val b = req(apiKey, "/api/comments/$commentId/heart")
+            val rb = "".toRequestBody(jsonMedia)
+            client.newCall((if (on) b.post(rb) else b.delete(rb)).build()).execute().use { it.isSuccessful }
+        } catch (e: Exception) { Log.w(TAG, "heartComment failed: ${e.message}"); false }
+    }
+
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
         val videoId: String,

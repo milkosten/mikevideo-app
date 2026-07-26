@@ -53,6 +53,14 @@ data class SubsFeedState(
     val videos: List<VideoCloudClient.Video> = emptyList(),
 )
 
+/** The comments sheet (P5) for the video being watched. [open] => show it. */
+data class CommentsState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val videoId: String = "",
+    val thread: VideoCloudClient.CommentThread? = null,
+)
+
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val sync = SyncManager.get(app)
@@ -73,6 +81,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _subsFeed = MutableStateFlow(SubsFeedState())
     val subsFeed: StateFlow<SubsFeedState> = _subsFeed.asStateFlow()
+
+    private val _comments = MutableStateFlow(CommentsState())
+    val comments: StateFlow<CommentsState> = _comments.asStateFlow()
 
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
@@ -226,6 +237,41 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeSubsFeed() {
         _subsFeed.value = SubsFeedState()
+    }
+
+    // ---- Comments (P5) ---------------------------------------------------------------
+    fun openComments(videoId: String) {
+        _comments.value = CommentsState(open = true, loading = true, videoId = videoId)
+        reloadComments()
+    }
+
+    fun closeComments() { _comments.value = CommentsState() }
+
+    private fun reloadComments() {
+        val id = _comments.value.videoId
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            val t = sync.comments(id)
+            _comments.value = _comments.value.copy(loading = false, thread = t)
+        }
+    }
+
+    fun postComment(body: String, parentId: String?) {
+        val id = _comments.value.videoId
+        if (id.isBlank() || body.isBlank()) return
+        viewModelScope.launch { if (sync.postComment(id, body.trim(), parentId)) reloadComments() }
+    }
+
+    fun deleteComment(commentId: String) {
+        viewModelScope.launch { if (sync.deleteComment(commentId)) reloadComments() }
+    }
+
+    fun likeComment(commentId: String, on: Boolean) {
+        viewModelScope.launch { sync.likeComment(commentId, on); reloadComments() }
+    }
+
+    fun heartComment(commentId: String, on: Boolean) {
+        viewModelScope.launch { if (sync.heartComment(commentId, on)) reloadComments() }
     }
 
     /** Set the library zoom level (column count), clamped and persisted. */

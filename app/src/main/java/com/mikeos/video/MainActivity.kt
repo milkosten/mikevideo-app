@@ -46,6 +46,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudSync
@@ -146,6 +147,7 @@ class MainActivity : ComponentActivity() {
                 val searchState by vm.search.collectAsStateWithLifecycle()
                 val channelState by vm.channel.collectAsStateWithLifecycle()
                 val subsFeedState by vm.subsFeed.collectAsStateWithLifecycle()
+                val commentsState by vm.comments.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -159,6 +161,7 @@ class MainActivity : ComponentActivity() {
                             onProgress = { id, pos, dur -> vm.saveProgress(id, pos, dur) },
                             onSave = { id, cb -> vm.saveToWatchLater(id, cb) },
                             onOpenChannel = { h -> vm.closePlayer(); vm.openChannel(h) },
+                            onOpenComments = { id -> vm.openComments(id) },
                         )
                         BackHandler { vm.closePlayer() }
                     }
@@ -195,6 +198,17 @@ class MainActivity : ComponentActivity() {
                             onOpenSubs = { vm.openSubsFeed() },
                         )
                     }
+                }
+
+                if (commentsState.open) {
+                    CommentsSheet(
+                        state = commentsState,
+                        onClose = { vm.closeComments() },
+                        onPost = { body, parent -> vm.postComment(body, parent) },
+                        onLike = { id, on -> vm.likeComment(id, on) },
+                        onHeart = { id, on -> vm.heartComment(id, on) },
+                        onDelete = { id -> vm.deleteComment(id) },
+                    )
                 }
             }
         }
@@ -692,6 +706,7 @@ private fun PlayerScreen(
     onProgress: (String, Double, Double?) -> Unit = { _, _, _ -> },
     onSave: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
     onOpenChannel: (String) -> Unit = {},
+    onOpenComments: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -820,6 +835,7 @@ private fun PlayerScreen(
                     onLike = { onLike(v.id, liked) { nl, nc -> liked = nl; likes = nc } },
                     onSaveClick = { onSave(v.id) { ok ->
                         Toast.makeText(context, if (ok) "Saved to Watch Later" else "Couldn't save", Toast.LENGTH_SHORT).show() } },
+                    onComments = { onOpenComments(v.id) },
                     onBack = onBack,
                     onInfo = { infoOpen = true },
                     onToggleFill = { fill = !fill },
@@ -852,6 +868,7 @@ private fun PlayerTopBar(
     likes: Int,
     onLike: () -> Unit,
     onSaveClick: () -> Unit,
+    onComments: () -> Unit,
     onBack: () -> Unit,
     onInfo: () -> Unit,
     onToggleFill: () -> Unit,
@@ -885,6 +902,9 @@ private fun PlayerTopBar(
                 contentDescription = "Like", tint = if (liked) MikeAccent else Color.White,
                 modifier = Modifier.size(20.dp))
             if (likes > 0) Text(" $likes", color = Color.White, fontSize = 13.sp)
+        }
+        IconButton(onClick = onComments) {
+            Icon(Icons.AutoMirrored.Filled.Comment, contentDescription = "Comments", tint = Color.White)
         }
         IconButton(onClick = onSaveClick) {
             Icon(Icons.Filled.PlaylistAdd, contentDescription = "Save to Watch Later", tint = Color.White)
@@ -1191,6 +1211,176 @@ private fun SubsFeedScreen(
                 ) {
                     items(state.videos, key = { it.id }) { v -> VideoCard(v, 2, onOpen) }
                 }
+            }
+        }
+    }
+}
+
+/* ------------------------------- Comments (P5) ------------------------------- */
+
+/** Compact "3h", "2d" relative time for comments. */
+private fun agoShort(iso: String?): String {
+    if (iso.isNullOrBlank()) return ""
+    val t = runCatching { java.time.OffsetDateTime.parse(iso).toInstant() }
+        .getOrElse { runCatching { java.time.Instant.parse(iso) }.getOrNull() } ?: return ""
+    val s = (java.time.Instant.now().epochSecond - t.epochSecond).coerceAtLeast(0)
+    return when {
+        s < 60 -> "just now"
+        s < 3600 -> "${s / 60}m ago"
+        s < 86400 -> "${s / 3600}h ago"
+        s < 2592000 -> "${s / 86400}d ago"
+        else -> "${s / 2592000}mo ago"
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CommentsSheet(
+    state: CommentsState,
+    onClose: () -> Unit,
+    onPost: (String, String?) -> Unit,
+    onLike: (String, Boolean) -> Unit,
+    onHeart: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    val thread = state.thread
+    var draft by remember { mutableStateOf("") }
+    var replyTo by remember { mutableStateOf<String?>(null) }
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MikeSurface,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).heightIn(min = 240.dp, max = 640.dp)) {
+            Text("${thread?.count ?: 0} Comments", color = MikeOnSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            when {
+                state.loading -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                thread == null -> Text("Couldn't load comments.", color = MikeMuted, fontSize = 14.sp,
+                    modifier = Modifier.padding(vertical = 24.dp))
+                thread.comments.isEmpty() -> Text("No comments yet — be the first.", color = MikeMuted,
+                    fontSize = 14.sp, modifier = Modifier.padding(vertical = 24.dp))
+                else -> Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    thread.comments.forEach { c ->
+                        CommentItem(
+                            c = c, isOwner = thread.isOwner, isReply = false,
+                            onLike = onLike, onHeart = onHeart, onDelete = onDelete,
+                            replying = replyTo == c.id,
+                            onReplyToggle = { replyTo = if (replyTo == c.id) null else c.id },
+                            onSubmitReply = { txt -> onPost(txt, c.id); replyTo = null },
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+            if (thread?.canComment == true) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 14.dp),
+                ) {
+                    androidx.compose.material3.TextField(
+                        value = draft, onValueChange = { draft = it },
+                        placeholder = { Text("Add a comment…", color = MikeMuted, fontSize = 14.sp) },
+                        maxLines = 4, shape = RoundedCornerShape(14.dp),
+                        colors = androidx.compose.material3.TextFieldDefaults.colors(
+                            focusedContainerColor = MikeSurfaceVariant,
+                            unfocusedContainerColor = MikeSurfaceVariant,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedTextColor = MikeOnSurface, unfocusedTextColor = MikeOnSurface,
+                            cursorColor = MikeAccent,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "Post", color = if (draft.isBlank()) MikeMuted else MikeAccent,
+                        fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        modifier = Modifier.clickable(enabled = draft.isNotBlank()) {
+                            onPost(draft, null); draft = ""
+                        }.padding(14.dp),
+                    )
+                }
+            } else {
+                Spacer(Modifier.height(14.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommentItem(
+    c: VideoCloudClient.Comment,
+    isOwner: Boolean,
+    isReply: Boolean,
+    onLike: (String, Boolean) -> Unit,
+    onHeart: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
+    replying: Boolean,
+    onReplyToggle: () -> Unit,
+    onSubmitReply: (String) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        ChannelAvatar(c.authorName, c.authorAvatar, if (isReply) 28.dp else 34.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(c.authorName, color = MikeOnSurface, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(6.dp))
+                Text(agoShort(c.createdAt), color = MikeMuted, fontSize = 11.sp)
+                if (c.hearted) { Spacer(Modifier.width(6.dp)); Text("❤", fontSize = 11.sp) }
+            }
+            Text(c.body, color = MikeOnSurface, fontSize = 13.5.sp, modifier = Modifier.padding(top = 2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp))
+                        .clickable { onLike(c.id, !c.liked) }.padding(horizontal = 6.dp, vertical = 5.dp),
+                ) {
+                    Icon(if (c.liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                        contentDescription = "Like", tint = if (c.liked) MikeAccent else MikeMuted,
+                        modifier = Modifier.size(15.dp))
+                    if (c.likeCount > 0) Text(" ${c.likeCount}", color = MikeMuted, fontSize = 12.sp)
+                }
+                if (!isReply) Text("Reply", color = MikeMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { onReplyToggle() }
+                        .padding(horizontal = 8.dp, vertical = 5.dp))
+                if (isOwner) Text(if (c.hearted) "♥" else "♡", color = if (c.hearted) MikeAccent else MikeMuted,
+                    fontSize = 15.sp, modifier = Modifier.clip(RoundedCornerShape(16.dp))
+                        .clickable { onHeart(c.id, !c.hearted) }.padding(horizontal = 8.dp, vertical = 3.dp))
+                if (c.canDelete) Text("Delete", color = MikeMuted, fontSize = 12.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { onDelete(c.id) }
+                        .padding(horizontal = 8.dp, vertical = 5.dp))
+            }
+            if (replying) {
+                var rdraft by remember { mutableStateOf("") }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    androidx.compose.material3.TextField(
+                        value = rdraft, onValueChange = { rdraft = it },
+                        placeholder = { Text("Add a reply…", color = MikeMuted, fontSize = 13.sp) },
+                        maxLines = 3, shape = RoundedCornerShape(12.dp),
+                        colors = androidx.compose.material3.TextFieldDefaults.colors(
+                            focusedContainerColor = MikeSurfaceVariant,
+                            unfocusedContainerColor = MikeSurfaceVariant,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedTextColor = MikeOnSurface, unfocusedTextColor = MikeOnSurface,
+                            cursorColor = MikeAccent,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("Send", color = if (rdraft.isBlank()) MikeMuted else MikeAccent,
+                        fontWeight = FontWeight.Bold, fontSize = 13.sp,
+                        modifier = Modifier.clickable(enabled = rdraft.isNotBlank()) { onSubmitReply(rdraft) }.padding(12.dp))
+                }
+            }
+            c.replies.forEach { rc ->
+                CommentItem(
+                    c = rc, isOwner = isOwner, isReply = true,
+                    onLike = onLike, onHeart = onHeart, onDelete = onDelete,
+                    replying = false, onReplyToggle = {}, onSubmitReply = {},
+                )
             }
         }
     }
