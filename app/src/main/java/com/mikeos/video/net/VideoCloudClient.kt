@@ -85,6 +85,10 @@ class VideoCloudClient(
         val takenAt: String?,
         val createdAt: String?,
         val error: String?,
+        // Channel (P3) — the creator's public profile, present on detail + public feed.
+        val channelHandle: String? = null,
+        val channelName: String? = null,
+        val channelAvatarUrl: String? = null,
     ) {
         /** A human-facing title: the AI title if we have one, else the raw filename. */
         val displayTitle: String get() = aiTitle?.takeUnless { it.isBlank() } ?: filename
@@ -113,6 +117,58 @@ class VideoCloudClient(
         val matchStart: Double,        // seconds — deep-link the player here
         val matchText: String?,
     )
+
+    /** A public creator profile (P3). */
+    data class Channel(
+        val handle: String,
+        val displayName: String,
+        val bio: String?,
+        val avatarUrl: String?,
+        val videoCount: Int,
+        val totalViews: Long,
+    )
+
+    /** A channel page: the profile + its public videos. */
+    data class ChannelPage(val channel: Channel, val videos: List<Video>, val isMe: Boolean)
+
+    /**
+     * `GET /api/channels/{handle}` — a creator's public profile + their public videos.
+     * No auth required (public), but we pass the key when present so `is_me` is accurate.
+     */
+    suspend fun getChannel(apiKey: String?, handle: String): ChannelPage? = withContext(Dispatchers.IO) {
+        val h = handle.trim().removePrefix("@")
+        if (h.isEmpty()) return@withContext null
+        try {
+            val enc = java.net.URLEncoder.encode(h, "UTF-8")
+            val b = Request.Builder().url("$baseUrl/api/channels/$enc").header("Accept", "application/json")
+            if (!apiKey.isNullOrBlank()) b.header("X-API-KEY", apiKey)
+            client.newCall(b.get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext null
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                val c = o.optJSONObject("channel") ?: return@withContext null
+                val stats = o.optJSONObject("stats")
+                val handleOut = c.strOrNull("handle") ?: return@withContext null
+                val arr = o.optJSONArray("videos")
+                val vids = (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optJSONObject(it) }.map { parse(it) }
+                ChannelPage(
+                    channel = Channel(
+                        handle = handleOut,
+                        displayName = c.strOrNull("display_name") ?: "@$handleOut",
+                        bio = c.strOrNull("bio"),
+                        avatarUrl = abs(c.strOrNull("avatar_url")),
+                        videoCount = stats?.intOrNull("video_count") ?: vids.size,
+                        totalViews = stats?.longOrNull("total_views") ?: 0L,
+                    ),
+                    videos = vids,
+                    isMe = o.optBoolean("is_me", false),
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "getChannel failed: ${e.message}")
+            null
+        }
+    }
 
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
@@ -313,6 +369,9 @@ class VideoCloudClient(
         takenAt = o.strOrNull("taken_at"),
         createdAt = o.strOrNull("created_at"),
         error = o.strOrNull("error"),
+        channelHandle = o.optJSONObject("channel")?.strOrNull("handle"),
+        channelName = o.optJSONObject("channel")?.strOrNull("display_name"),
+        channelAvatarUrl = abs(o.optJSONObject("channel")?.strOrNull("avatar_url")),
     )
 
     /** Spoken-word search -> `GET /api/search?q=`. Empty on failure/blank. */

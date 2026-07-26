@@ -37,6 +37,13 @@ data class SearchState(
     val loading: Boolean = false,
 )
 
+/** A creator's public channel page (P3). Non-null [page] or [loading] => show it. */
+data class ChannelState(
+    val handle: String = "",
+    val loading: Boolean = false,
+    val page: VideoCloudClient.ChannelPage? = null,
+)
+
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val sync = SyncManager.get(app)
@@ -51,6 +58,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     private val _search = MutableStateFlow(SearchState())
     val search: StateFlow<SearchState> = _search.asStateFlow()
     private var searchJob: Job? = null
+
+    private val _channel = MutableStateFlow(ChannelState())
+    val channel: StateFlow<ChannelState> = _channel.asStateFlow()
 
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
@@ -166,6 +176,19 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closePlayer() {
         _player.value = PlayerState()
+    }
+
+    /** Open a creator's channel by @handle (from a card/player byline). */
+    fun openChannel(handle: String) {
+        _channel.value = ChannelState(handle = handle, loading = true)
+        viewModelScope.launch {
+            val page = sync.channel(handle)
+            _channel.value = ChannelState(handle = handle, loading = false, page = page)
+        }
+    }
+
+    fun closeChannel() {
+        _channel.value = ChannelState()
     }
 
     /** Set the library zoom level (column count), clamped and persisted. */

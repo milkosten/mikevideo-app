@@ -189,6 +189,10 @@ class SyncManager private constructor(private val appContext: Context) {
         return cloud.search(key, query)
     }
 
+    /** A creator's public channel (P3). Public endpoint; key sent when present. */
+    suspend fun channel(handle: String): VideoCloudClient.ChannelPage? =
+        cloud.getChannel(apiKey(), handle)
+
     suspend fun reportView(id: String) = cloud.reportView(id)
     suspend fun setLike(id: String, like: Boolean): Pair<Boolean, Int>? =
         apiKey()?.let { cloud.setLike(it, id, like) }

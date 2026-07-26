@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -90,6 +91,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -141,30 +143,46 @@ class MainActivity : ComponentActivity() {
                 val player by vm.player.collectAsStateWithLifecycle()
                 val columns by vm.gridColumns.collectAsStateWithLifecycle()
                 val searchState by vm.search.collectAsStateWithLifecycle()
+                val channelState by vm.channel.collectAsStateWithLifecycle()
 
-                if (player.video == null && !player.loading) {
-                    LibraryScreen(
-                        state = library,
-                        columns = columns,
-                        onColumns = { vm.setGridColumns(it) },
-                        search = searchState,
-                        onQuery = { vm.setQuery(it) },
-                        onOpenResult = { id, start -> vm.openSearchResult(id, start) },
-                        onRefresh = { vm.refresh() },
-                        onForceSync = { vm.forceSync() },
-                        onAutoSync = { vm.setAutoSync(it) },
-                        onWifiOnly = { vm.setWifiOnly(it) },
-                        onOpen = { vm.openVideo(it) },
-                    )
-                } else {
-                    PlayerScreen(
-                        state = player,
-                        onBack = { vm.closePlayer() },
-                        onLike = { id, liked, cb -> vm.toggleLike(id, liked, cb) },
-                        onProgress = { id, pos, dur -> vm.saveProgress(id, pos, dur) },
-                        onSave = { id, cb -> vm.saveToWatchLater(id, cb) },
-                    )
-                    BackHandler { vm.closePlayer() }
+                val playerActive = player.video != null || player.loading
+                val channelActive = channelState.page != null || channelState.loading
+
+                when {
+                    playerActive -> {
+                        PlayerScreen(
+                            state = player,
+                            onBack = { vm.closePlayer() },
+                            onLike = { id, liked, cb -> vm.toggleLike(id, liked, cb) },
+                            onProgress = { id, pos, dur -> vm.saveProgress(id, pos, dur) },
+                            onSave = { id, cb -> vm.saveToWatchLater(id, cb) },
+                            onOpenChannel = { h -> vm.closePlayer(); vm.openChannel(h) },
+                        )
+                        BackHandler { vm.closePlayer() }
+                    }
+                    channelActive -> {
+                        ChannelScreen(
+                            state = channelState,
+                            onBack = { vm.closeChannel() },
+                            onOpen = { vm.openVideo(it) },
+                        )
+                        BackHandler { vm.closeChannel() }
+                    }
+                    else -> {
+                        LibraryScreen(
+                            state = library,
+                            columns = columns,
+                            onColumns = { vm.setGridColumns(it) },
+                            search = searchState,
+                            onQuery = { vm.setQuery(it) },
+                            onOpenResult = { id, start -> vm.openSearchResult(id, start) },
+                            onRefresh = { vm.refresh() },
+                            onForceSync = { vm.forceSync() },
+                            onAutoSync = { vm.setAutoSync(it) },
+                            onWifiOnly = { vm.setWifiOnly(it) },
+                            onOpen = { vm.openVideo(it) },
+                        )
+                    }
                 }
             }
         }
@@ -657,6 +675,7 @@ private fun PlayerScreen(
     onLike: (String, Boolean, (Boolean, Int) -> Unit) -> Unit = { _, _, _ -> },
     onProgress: (String, Double, Double?) -> Unit = { _, _, _ -> },
     onSave: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
+    onOpenChannel: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -802,6 +821,7 @@ private fun PlayerScreen(
                 v = v,
                 onSeek = { ms -> exo.seekTo(ms); exo.play(); infoOpen = false },
                 onClose = { infoOpen = false },
+                onOpenChannel = { h -> infoOpen = false; onOpenChannel(h) },
             )
         }
     }
@@ -876,7 +896,12 @@ private fun PlayerTopBar(
 /** On-demand technical details — the stuff a curious user *can* look up, but that never
  *  clutters the video. Tap the ⓘ to open; tap anywhere to dismiss. */
 @Composable
-private fun VideoInfoOverlay(v: VideoCloudClient.Video, onSeek: (Long) -> Unit, onClose: () -> Unit) {
+private fun VideoInfoOverlay(
+    v: VideoCloudClient.Video,
+    onSeek: (Long) -> Unit,
+    onClose: () -> Unit,
+    onOpenChannel: (String) -> Unit = {},
+) {
     val rows = buildList {
         friendlyDate(v.takenAt ?: v.createdAt).takeIf { it.isNotEmpty() }?.let { add("Recorded" to it) }
         if (v.dispW != null && v.dispH != null) {
@@ -910,6 +935,25 @@ private fun VideoInfoOverlay(v: VideoCloudClient.Video, onSeek: (Long) -> Unit, 
                 // Swallow taps inside the card so they don't dismiss the overlay.
                 .clickable(enabled = false) {},
         ) {
+            // Channel byline (P3) — the creator, tappable to open their channel.
+            v.channelHandle?.let { handle ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .clickable { onOpenChannel(handle) }.padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ChannelAvatar(v.channelName ?: handle, v.channelAvatarUrl, 40.dp)
+                    Spacer(Modifier.width(11.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(v.channelName ?: "@$handle", color = MikeOnSurface,
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text("@$handle", color = MikeMuted, fontSize = 12.5.sp, maxLines = 1)
+                    }
+                    Text("View channel ›", color = MikeAccent, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
             // AI layer (Phase C): title, summary, tags, and clickable chapters.
             v.aiTitle?.takeUnless { it.isBlank() }?.let {
                 Text(it, color = MikeOnSurface, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
@@ -966,6 +1010,102 @@ private fun VideoInfoOverlay(v: VideoCloudClient.Video, onSeek: (Long) -> Unit, 
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier.weight(1.4f),
                     )
+                }
+            }
+        }
+    }
+}
+
+/* ------------------------------- Channel (P3) ------------------------------- */
+
+/** A round creator avatar: the image if set, else the first letter on the accent. */
+@Composable
+private fun ChannelAvatar(name: String, avatarUrl: String?, size: Dp) {
+    val context = LocalContext.current
+    Box(
+        Modifier.size(size).clip(CircleShape).background(MikeAccent),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!avatarUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(context).data(avatarUrl).crossfade(true).build(),
+                imageLoader = VideoImages.loader(context),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                name.trim().take(1).uppercase(),
+                color = Color.White,
+                fontSize = (size.value * 0.42f).sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+/** A creator's public channel: profile header + their public videos (P3). */
+@Composable
+private fun ChannelScreen(
+    state: ChannelState,
+    onBack: () -> Unit,
+    onOpen: (VideoCloudClient.Video) -> Unit,
+) {
+    Scaffold(containerColor = MikeBg) { pad ->
+        Column(
+            Modifier.fillMaxSize().padding(pad).padding(horizontal = 14.dp).statusBarsPadding(),
+        ) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
+                }
+                Text("CHANNEL", color = MikeMuted, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            }
+            val page = state.page
+            when {
+                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                page == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Channel not found.", color = MikeMuted, fontSize = 14.sp)
+                }
+                else -> {
+                    val c = page.channel
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ChannelAvatar(c.displayName, c.avatarUrl, 76.dp)
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(c.displayName, color = MikeOnSurface, fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold, maxLines = 2)
+                            Text("@${c.handle}", color = MikeMuted, fontSize = 13.sp)
+                            val vs = "${c.videoCount} video${if (c.videoCount == 1) "" else "s"}"
+                            val ws = "${c.totalViews} view${if (c.totalViews == 1L) "" else "s"}"
+                            Text("$vs · $ws", color = MikeMuted, fontSize = 12.5.sp)
+                        }
+                    }
+                    if (!c.bio.isNullOrBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(c.bio, color = MikeOnSurface, fontSize = 13.5.sp, lineHeight = 19.sp)
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    if (page.videos.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                            Text("No public videos yet.", color = MikeMuted, fontSize = 14.sp)
+                        }
+                    } else {
+                        LazyVerticalStaggeredGrid(
+                            columns = StaggeredGridCells.Fixed(2),
+                            verticalItemSpacing = 10.dp,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            items(page.videos, key = { it.id }) { v -> VideoCard(v, 2, onOpen) }
+                        }
+                    }
                 }
             }
         }
