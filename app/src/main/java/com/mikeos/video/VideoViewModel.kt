@@ -132,6 +132,10 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { sync.saveProgress(id, posSec, durSec) }
     }
 
+    fun saveToWatchLater(id: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch { onDone(sync.saveToWatchLater(id)) }
+    }
+
     /** Open from a search hit, deep-linking to the spoken moment. */
     fun openSearchResult(id: String, startSec: Double) {
         _player.value = PlayerState(video = null, loading = true, seekToMs = (startSec * 1000).toLong())

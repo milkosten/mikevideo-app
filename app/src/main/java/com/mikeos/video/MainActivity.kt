@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
+import android.widget.Toast
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
@@ -160,6 +162,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { vm.closePlayer() },
                         onLike = { id, liked, cb -> vm.toggleLike(id, liked, cb) },
                         onProgress = { id, pos, dur -> vm.saveProgress(id, pos, dur) },
+                        onSave = { id, cb -> vm.saveToWatchLater(id, cb) },
                     )
                     BackHandler { vm.closePlayer() }
                 }
@@ -653,6 +656,7 @@ private fun PlayerScreen(
     onBack: () -> Unit,
     onLike: (String, Boolean, (Boolean, Int) -> Unit) -> Unit = { _, _, _ -> },
     onProgress: (String, Double, Double?) -> Unit = { _, _, _ -> },
+    onSave: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -779,6 +783,8 @@ private fun PlayerScreen(
                     liked = liked,
                     likes = likes,
                     onLike = { onLike(v.id, liked) { nl, nc -> liked = nl; likes = nc } },
+                    onSaveClick = { onSave(v.id) { ok ->
+                        Toast.makeText(context, if (ok) "Saved to Watch Later" else "Couldn't save", Toast.LENGTH_SHORT).show() } },
                     onBack = onBack,
                     onInfo = { infoOpen = true },
                     onToggleFill = { fill = !fill },
@@ -809,6 +815,7 @@ private fun PlayerTopBar(
     liked: Boolean,
     likes: Int,
     onLike: () -> Unit,
+    onSaveClick: () -> Unit,
     onBack: () -> Unit,
     onInfo: () -> Unit,
     onToggleFill: () -> Unit,
@@ -842,6 +849,9 @@ private fun PlayerTopBar(
                 contentDescription = "Like", tint = if (liked) MikeAccent else Color.White,
                 modifier = Modifier.size(20.dp))
             if (likes > 0) Text(" $likes", color = Color.White, fontSize = 13.sp)
+        }
+        IconButton(onClick = onSaveClick) {
+            Icon(Icons.Filled.PlaylistAdd, contentDescription = "Save to Watch Later", tint = Color.White)
         }
         IconButton(onClick = onToggleFill) {
             Icon(

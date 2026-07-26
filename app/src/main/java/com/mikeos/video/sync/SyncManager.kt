@@ -195,6 +195,8 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun saveProgress(id: String, posSec: Double, durSec: Double?) {
         apiKey()?.let { cloud.putProgress(it, id, posSec, durSec) }
     }
+    suspend fun saveToWatchLater(id: String): Boolean =
+        apiKey()?.let { cloud.addToWatchLater(it, id) } ?: false
 
     // ---- gating -----------------------------------------------------------------------------
 

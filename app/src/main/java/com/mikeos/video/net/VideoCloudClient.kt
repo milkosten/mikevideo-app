@@ -260,6 +260,24 @@ class VideoCloudClient(
         }; Unit
     }
 
+    /** Add a video to the user's Watch Later playlist (finds/creates it server-side). */
+    suspend fun addToWatchLater(apiKey: String, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val body = client.newCall(req(apiKey, "/api/playlists").get().build())
+                .execute().use { it.body?.string().orEmpty() }
+            val arr = JSONObject(body).optJSONArray("playlists") ?: return@withContext false
+            var plId: String? = null
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i)
+                if (o != null && o.optString("is_system") == "watch_later") { plId = o.optString("id"); break }
+            }
+            if (plId.isNullOrBlank()) return@withContext false
+            client.newCall(req(apiKey, "/api/playlists/$plId/items")
+                .post(JSONObject().put("video_id", videoId).toString().toRequestBody(jsonMedia))
+                .build()).execute().use { it.isSuccessful }
+        } catch (e: Exception) { false }
+    }
+
     private fun parse(o: JSONObject): Video = Video(
         id = o.optString("id"),
         filename = o.optString("filename").ifBlank { "video.mp4" },
