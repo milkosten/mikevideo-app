@@ -62,6 +62,13 @@ data class CommentsState(
     val thread: VideoCloudClient.CommentThread? = null,
 )
 
+/** The Shorts feed (P9). [open] => show the swipe pager. */
+data class ShortsState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val items: List<VideoCloudClient.Short> = emptyList(),
+)
+
 /** The notifications inbox (P8). [open] => show the screen; [unread] drives the bell badge. */
 data class NotificationsState(
     val open: Boolean = false,
@@ -101,6 +108,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     private val _notifs = MutableStateFlow(NotificationsState())
     val notifs: StateFlow<NotificationsState> = _notifs.asStateFlow()
 
+    private val _shorts = MutableStateFlow(ShortsState())
+    val shorts: StateFlow<ShortsState> = _shorts.asStateFlow()
+
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
     private val _gridColumns = MutableStateFlow(prefs.getInt(KEY_COLUMNS, 2).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -134,6 +144,27 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeNotifications() { _notifs.value = _notifs.value.copy(open = false) }
+
+    // ---- Shorts (P9) -----------------------------------------------------------------
+    fun openShorts() {
+        _shorts.value = ShortsState(open = true, loading = true)
+        viewModelScope.launch {
+            _shorts.value = ShortsState(open = true, loading = false, items = sync.shorts())
+        }
+    }
+
+    fun closeShorts() { _shorts.value = ShortsState() }
+
+    fun likeShort(id: String, currentlyLiked: Boolean) {
+        viewModelScope.launch {
+            val res = sync.setLike(id, !currentlyLiked) ?: return@launch
+            _shorts.value = _shorts.value.copy(items = _shorts.value.items.map {
+                if (it.id == id) it.copy(liked = res.first, likes = res.second) else it
+            })
+        }
+    }
+
+    fun reportShortView(id: String) { viewModelScope.launch { sync.reportView(id) } }
 
     fun markAllNotificationsRead() {
         viewModelScope.launch { sync.markNotificationsRead(null); refreshUnread(); openNotificationsReload() }

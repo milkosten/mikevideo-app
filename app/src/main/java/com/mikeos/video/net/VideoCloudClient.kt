@@ -401,6 +401,49 @@ class VideoCloudClient(
         } catch (e: Exception) { Log.w(TAG, "markRead failed: ${e.message}"); false }
     }
 
+    /** One short (P9) — a portrait clip with playable media inline. */
+    data class Short(
+        val id: String,
+        val aiTitle: String?,
+        val hlsUrl: String?,
+        val mp4Url: String?,
+        val thumbUrl: String?,
+        val displayWidth: Int?,
+        val displayHeight: Int?,
+        val channelName: String,
+        val channelHandle: String?,
+        val likes: Int,
+        val liked: Boolean,
+        val viewCount: Long,
+        val createdAt: String?,
+    )
+
+    /** `GET /api/shorts` — the vertical Shorts feed. Key sent when present (like state). */
+    suspend fun shorts(apiKey: String?): List<Short> = withContext(Dispatchers.IO) {
+        try {
+            val b = Request.Builder().url("$baseUrl/api/shorts").header("Accept", "application/json")
+            if (!apiKey.isNullOrBlank()) b.header("X-API-KEY", apiKey)
+            client.newCall(b.get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val arr = runCatching { JSONObject(raw).optJSONArray("shorts") }.getOrNull() ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { o ->
+                    val ch = o.optJSONObject("channel")
+                    Short(
+                        id = o.optString("id"), aiTitle = o.strOrNull("ai_title"),
+                        hlsUrl = abs(o.strOrNull("hls_url")), mp4Url = abs(o.strOrNull("mp4_url")),
+                        thumbUrl = abs(o.strOrNull("thumb_url")),
+                        displayWidth = o.intOrNull("display_width"), displayHeight = o.intOrNull("display_height"),
+                        channelName = ch?.strOrNull("display_name") ?: "MikeVideo",
+                        channelHandle = ch?.strOrNull("handle"),
+                        likes = o.intOrNull("likes") ?: 0, liked = o.optBoolean("liked", false),
+                        viewCount = o.longOrNull("view_count") ?: 0L, createdAt = o.strOrNull("created_at"),
+                    )
+                }
+            }
+        } catch (e: Exception) { Log.w(TAG, "shorts failed: ${e.message}"); emptyList() }
+    }
+
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
         val videoId: String,

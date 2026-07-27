@@ -58,6 +58,9 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Subscriptions
@@ -79,6 +82,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -156,6 +160,7 @@ class MainActivity : ComponentActivity() {
                 val commentsState by vm.comments.collectAsStateWithLifecycle()
                 val autoplay by vm.autoplay.collectAsStateWithLifecycle()
                 val notifsState by vm.notifs.collectAsStateWithLifecycle()
+                val shortsState by vm.shorts.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -215,6 +220,16 @@ class MainActivity : ComponentActivity() {
                         )
                         BackHandler { vm.closeNotifications() }
                     }
+                    shortsState.open -> {
+                        ShortsScreen(
+                            state = shortsState,
+                            onBack = { vm.closeShorts() },
+                            onLike = { id, liked -> vm.likeShort(id, liked) },
+                            onView = { vm.reportShortView(it) },
+                            onOpenChannel = { vm.closeShorts(); vm.openChannel(it) },
+                        )
+                        BackHandler { vm.closeShorts() }
+                    }
                     else -> {
                         LibraryScreen(
                             state = library,
@@ -232,6 +247,7 @@ class MainActivity : ComponentActivity() {
                             onOpenForYou = { vm.openHomeFeed() },
                             onOpenNotifs = { vm.openNotifications() },
                             unreadCount = notifsState.unread,
+                            onOpenShorts = { vm.openShorts() },
                         )
                     }
                 }
@@ -322,6 +338,7 @@ private fun LibraryScreen(
     onOpenForYou: () -> Unit = {},
     onOpenNotifs: () -> Unit = {},
     unreadCount: Int = 0,
+    onOpenShorts: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -353,6 +370,9 @@ private fun LibraryScreen(
                 }
                 SyncPill(syncing = syncing, onClick = { showSettings = true })
                 Spacer(Modifier.size(4.dp))
+                IconButton(onClick = onOpenShorts) {
+                    Icon(Icons.Filled.Bolt, contentDescription = "Shorts", tint = MikeMuted)
+                }
                 IconButton(onClick = onOpenForYou) {
                     Icon(Icons.Filled.Recommend, contentDescription = "For You", tint = MikeMuted)
                 }
@@ -1345,6 +1365,103 @@ private fun NotificationsScreen(
                     Spacer(Modifier.height(20.dp))
                 }
             }
+        }
+    }
+}
+
+/** The Shorts vertical swipe feed (P9): portrait clips, one shared muted+loop player. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun ShortsScreen(
+    state: ShortsState,
+    onBack: () -> Unit,
+    onLike: (String, Boolean) -> Unit,
+    onView: (String) -> Unit,
+    onOpenChannel: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    DisposableEffect(Unit) {                                  // immersive while swiping
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        when {
+            state.loading -> CircularProgressIndicator(color = MikeAccent, modifier = Modifier.align(Alignment.Center))
+            state.items.isEmpty() -> Text(
+                "No shorts yet.\nPublish a portrait clip under 90s.",
+                color = MikeMuted, fontSize = 15.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center))
+            else -> {
+                val pager = rememberPagerState(pageCount = { state.items.size })
+                val exo = remember {
+                    val dsf = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                    ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(dsf)).build().apply {
+                        repeatMode = Player.REPEAT_MODE_ONE; volume = 0f; playWhenReady = true
+                    }
+                }
+                DisposableEffect(Unit) { onDispose { exo.release() } }
+                // Swap the shared player to the settled short (muted, looping).
+                LaunchedEffect(pager.settledPage, state.items.size) {
+                    val s = state.items.getOrNull(pager.settledPage) ?: return@LaunchedEffect
+                    val url = s.hlsUrl ?: s.mp4Url ?: return@LaunchedEffect
+                    exo.setMediaItem(MediaItem.fromUri(url)); exo.prepare(); exo.playWhenReady = true
+                    onView(s.id)
+                }
+                VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                    val s = state.items[page]
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (page == pager.settledPage) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    PlayerView(ctx).apply {
+                                        player = exo; useController = false
+                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                        setBackgroundColor(android.graphics.Color.BLACK)
+                                    }
+                                },
+                                update = { it.player = exo },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else if (s.thumbUrl != null) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context).data(s.thumbUrl).crossfade(true).build(),
+                                imageLoader = VideoImages.loader(context), contentDescription = null,
+                                contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                        }
+                        // Bottom gradient + byline/title.
+                        Column(
+                            Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))))
+                                .navigationBarsPadding().padding(start = 16.dp, end = 78.dp, bottom = 20.dp, top = 40.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { s.channelHandle?.let(onOpenChannel) }) {
+                                ChannelAvatar(s.channelName, null, 34.dp)
+                                Spacer(Modifier.width(9.dp))
+                                Text(s.channelName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(s.aiTitle?.takeUnless { it.isBlank() } ?: friendlyDate(s.createdAt),
+                                color = Color.White, fontSize = 14.sp, maxLines = 2)
+                        }
+                        // Right action rail.
+                        Column(
+                            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 12.dp, bottom = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(if (s.liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                                contentDescription = "Like", tint = if (s.liked) MikeAccent else Color.White,
+                                modifier = Modifier.size(34.dp).clickable { onLike(s.id, s.liked) })
+                            Text("${s.likes}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+        IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).statusBarsPadding()) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
         }
     }
 }
