@@ -209,6 +209,10 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun related(videoId: String): List<VideoCloudClient.Video> =
         cloud.related(apiKey(), videoId)
 
+    /** Set a custom thumbnail from a frame (P13). */
+    suspend fun setThumbnail(videoId: String, atSec: Double): Boolean =
+        apiKey()?.let { cloud.setThumbnail(it, videoId, atSec) } ?: false
+
     /** The vertical Shorts feed (P9). */
     suspend fun shorts(): List<VideoCloudClient.Short> = cloud.shorts(apiKey())
 

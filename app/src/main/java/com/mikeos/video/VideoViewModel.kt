@@ -205,6 +205,11 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reportShortView(id: String) { viewModelScope.launch { sync.reportView(id) } }
 
+    /** Set a custom thumbnail from the current frame (P13). */
+    fun setThumbnail(id: String, atSec: Double, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch { onResult(sync.setThumbnail(id, atSec)) }
+    }
+
     fun markAllNotificationsRead() {
         viewModelScope.launch { sync.markNotificationsRead(null); refreshUnread(); openNotificationsReload() }
     }

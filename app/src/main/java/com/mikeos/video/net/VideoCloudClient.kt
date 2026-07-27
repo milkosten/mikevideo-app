@@ -89,6 +89,7 @@ class VideoCloudClient(
         val channelHandle: String? = null,
         val channelName: String? = null,
         val channelAvatarUrl: String? = null,
+        val isOwner: Boolean = false,       // detail only — the viewer owns this video
     ) {
         /** A human-facing title: the AI title if we have one, else the raw filename. */
         val displayTitle: String get() = aiTitle?.takeUnless { it.isBlank() } ?: filename
@@ -208,6 +209,15 @@ class VideoCloudClient(
 
     /** `GET /api/feed/home` — the personalized recommendation feed (P6). */
     suspend fun homeFeed(apiKey: String): List<Video> = feedVideos(apiKey, "/api/feed/home")
+
+    /** Set the thumbnail from a frame at [atSec] (P13). `POST /thumbnail {at_sec}`. */
+    suspend fun setThumbnail(apiKey: String, videoId: String, atSec: Double): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val body = JSONObject().put("at_sec", atSec).toString().toRequestBody(jsonMedia)
+            client.newCall(req(apiKey, "/api/videos/$videoId/thumbnail").post(body).build())
+                .execute().use { it.isSuccessful }
+        } catch (e: Exception) { Log.w(TAG, "setThumbnail failed: ${e.message}"); false }
+    }
 
     /** `GET /api/videos/{id}/related` — the up-next rail (P7). Key sent when present. */
     suspend fun related(apiKey: String?, videoId: String): List<Video> = withContext(Dispatchers.IO) {
@@ -705,6 +715,7 @@ class VideoCloudClient(
         channelHandle = o.optJSONObject("channel")?.strOrNull("handle"),
         channelName = o.optJSONObject("channel")?.strOrNull("display_name"),
         channelAvatarUrl = abs(o.optJSONObject("channel")?.strOrNull("avatar_url")),
+        isOwner = o.optBoolean("is_owner", false),
     )
 
     /** Spoken-word search -> `GET /api/search?q=`. Empty on failure/blank. */

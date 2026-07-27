@@ -186,6 +186,7 @@ class MainActivity : ComponentActivity() {
                             onToggleAutoplay = { vm.setAutoplay(it) },
                             onEnded = { vm.playNextIfAuto() },
                             onOpenRelated = { vm.openVideo(it) },
+                            onSetThumbnail = { id, sec, cb -> vm.setThumbnail(id, sec, cb) },
                         )
                         BackHandler { vm.closePlayer() }
                     }
@@ -825,6 +826,7 @@ private fun PlayerScreen(
     onToggleAutoplay: (Boolean) -> Unit = {},
     onEnded: () -> Unit = {},
     onOpenRelated: (VideoCloudClient.Video) -> Unit = {},
+    onSetThumbnail: (String, Double, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -1002,6 +1004,12 @@ private fun PlayerScreen(
                 onSetSpeed = { speed = it },
                 qualityCap = qualityCap,
                 onSetQuality = { qualityCap = it },
+                canSetThumbnail = v.isOwner,
+                onSetThumbnail = {
+                    onSetThumbnail(v.id, exo.currentPosition / 1000.0) { ok ->
+                        Toast.makeText(context, if (ok) "Thumbnail updated" else "Couldn't set thumbnail", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 onSeek = { ms -> exo.seekTo(ms); exo.play(); infoOpen = false },
                 onClose = { infoOpen = false },
                 onOpenChannel = { h -> infoOpen = false; onOpenChannel(h) },
@@ -1097,6 +1105,8 @@ private fun VideoInfoOverlay(
     onSetSpeed: (Float) -> Unit = {},
     qualityCap: Int = 0,
     onSetQuality: (Int) -> Unit = {},
+    canSetThumbnail: Boolean = false,
+    onSetThumbnail: () -> Unit = {},
     onSeek: (Long) -> Unit,
     onClose: () -> Unit,
     onOpenChannel: (String) -> Unit = {},
@@ -1194,6 +1204,15 @@ private fun VideoInfoOverlay(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+            }
+
+            // Owner tools (P13) — set a custom thumbnail from the current frame.
+            if (canSetThumbnail) {
+                Text("Set current frame as thumbnail", color = MikeBg, fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(MikeAccent).clickable { onSetThumbnail() }.padding(vertical = 12.dp))
+                Spacer(Modifier.height(20.dp))
             }
 
             // Playback controls (P10) — speed + quality.
