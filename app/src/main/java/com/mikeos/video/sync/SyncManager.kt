@@ -212,6 +212,9 @@ class SyncManager private constructor(private val appContext: Context) {
     /** The vertical Shorts feed (P9). */
     suspend fun shorts(): List<VideoCloudClient.Short> = cloud.shorts(apiKey())
 
+    /** Trending / Explore (P11). */
+    suspend fun explore(tag: String?): VideoCloudClient.ExplorePage? = cloud.explore(apiKey(), tag)
+
     // Notifications (P8)
     suspend fun notifications(): VideoCloudClient.NotificationFeed? = cloud.notifications(apiKey())
     suspend fun markNotificationsRead(id: String?): Boolean =

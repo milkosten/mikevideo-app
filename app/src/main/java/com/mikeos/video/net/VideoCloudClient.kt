@@ -444,6 +444,31 @@ class VideoCloudClient(
         } catch (e: Exception) { Log.w(TAG, "shorts failed: ${e.message}"); emptyList() }
     }
 
+    /** Explore/Trending page (P11): the active tag, category chips, and videos. */
+    data class ExplorePage(val tag: String?, val tags: List<String>, val videos: List<Video>)
+
+    /** `GET /api/explore[?tag=]` — trending public videos + category chips. */
+    suspend fun explore(apiKey: String?, tag: String?): ExplorePage? = withContext(Dispatchers.IO) {
+        try {
+            val path = if (tag.isNullOrBlank()) "/api/explore"
+                       else "/api/explore?tag=" + java.net.URLEncoder.encode(tag, "UTF-8")
+            val b = Request.Builder().url("$baseUrl$path").header("Accept", "application/json")
+            if (!apiKey.isNullOrBlank()) b.header("X-API-KEY", apiKey)
+            client.newCall(b.get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext null
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                val tarr = o.optJSONArray("tags")
+                val varr = o.optJSONArray("videos")
+                ExplorePage(
+                    tag = o.strOrNull("tag"),
+                    tags = (0 until (tarr?.length() ?: 0)).mapNotNull { tarr?.optString(it)?.takeUnless { s -> s.isBlank() } },
+                    videos = (0 until (varr?.length() ?: 0)).mapNotNull { varr?.optJSONObject(it) }.map { parse(it) },
+                )
+            }
+        } catch (e: Exception) { Log.w(TAG, "explore failed: ${e.message}"); null }
+    }
+
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
         val videoId: String,

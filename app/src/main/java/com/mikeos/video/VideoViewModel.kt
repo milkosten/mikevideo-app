@@ -62,6 +62,15 @@ data class CommentsState(
     val thread: VideoCloudClient.CommentThread? = null,
 )
 
+/** Trending / Explore (P11). [open] => show the screen. */
+data class ExploreState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val tag: String? = null,
+    val tags: List<String> = emptyList(),
+    val videos: List<VideoCloudClient.Video> = emptyList(),
+)
+
 /** The Shorts feed (P9). [open] => show the swipe pager. */
 data class ShortsState(
     val open: Boolean = false,
@@ -111,6 +120,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     private val _shorts = MutableStateFlow(ShortsState())
     val shorts: StateFlow<ShortsState> = _shorts.asStateFlow()
 
+    private val _explore = MutableStateFlow(ExploreState())
+    val explore: StateFlow<ExploreState> = _explore.asStateFlow()
+
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
     private val _gridColumns = MutableStateFlow(prefs.getInt(KEY_COLUMNS, 2).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -154,6 +166,18 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeShorts() { _shorts.value = ShortsState() }
+
+    // ---- Explore (P11) ---------------------------------------------------------------
+    fun openExplore(tag: String? = null) {
+        _explore.value = _explore.value.copy(open = true, loading = true, tag = tag)
+        viewModelScope.launch {
+            val page = sync.explore(tag)
+            _explore.value = ExploreState(open = true, loading = false, tag = tag,
+                tags = page?.tags ?: _explore.value.tags, videos = page?.videos ?: emptyList())
+        }
+    }
+
+    fun closeExplore() { _explore.value = ExploreState() }
 
     fun likeShort(id: String, currentlyLiked: Boolean) {
         viewModelScope.launch {

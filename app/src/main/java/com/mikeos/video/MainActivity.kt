@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Recommend
@@ -162,6 +163,7 @@ class MainActivity : ComponentActivity() {
                 val autoplay by vm.autoplay.collectAsStateWithLifecycle()
                 val notifsState by vm.notifs.collectAsStateWithLifecycle()
                 val shortsState by vm.shorts.collectAsStateWithLifecycle()
+                val exploreState by vm.explore.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -231,6 +233,15 @@ class MainActivity : ComponentActivity() {
                         )
                         BackHandler { vm.closeShorts() }
                     }
+                    exploreState.open -> {
+                        ExploreScreen(
+                            state = exploreState,
+                            onBack = { vm.closeExplore() },
+                            onTag = { vm.openExplore(it) },
+                            onOpen = { vm.openVideo(it) },
+                        )
+                        BackHandler { vm.closeExplore() }
+                    }
                     else -> {
                         LibraryScreen(
                             state = library,
@@ -249,6 +260,7 @@ class MainActivity : ComponentActivity() {
                             onOpenNotifs = { vm.openNotifications() },
                             unreadCount = notifsState.unread,
                             onOpenShorts = { vm.openShorts() },
+                            onOpenExplore = { vm.openExplore() },
                         )
                     }
                 }
@@ -340,6 +352,7 @@ private fun LibraryScreen(
     onOpenNotifs: () -> Unit = {},
     unreadCount: Int = 0,
     onOpenShorts: () -> Unit = {},
+    onOpenExplore: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -373,6 +386,9 @@ private fun LibraryScreen(
                 Spacer(Modifier.size(4.dp))
                 IconButton(onClick = onOpenShorts) {
                     Icon(Icons.Filled.Bolt, contentDescription = "Shorts", tint = MikeMuted)
+                }
+                IconButton(onClick = onOpenExplore) {
+                    Icon(Icons.Filled.Explore, contentDescription = "Explore", tint = MikeMuted)
                 }
                 IconButton(onClick = onOpenForYou) {
                     Icon(Icons.Filled.Recommend, contentDescription = "For You", tint = MikeMuted)
@@ -1520,6 +1536,59 @@ private fun ShortsScreen(
         }
         IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).statusBarsPadding()) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+        }
+    }
+}
+
+/** Trending / Explore (P11): category chips + a popular-video grid. */
+@Composable
+private fun ExploreScreen(
+    state: ExploreState,
+    onBack: () -> Unit,
+    onTag: (String?) -> Unit,
+    onOpen: (VideoCloudClient.Video) -> Unit,
+) {
+    Scaffold(containerColor = MikeBg) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 14.dp).statusBarsPadding()) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
+                }
+                Text(if (state.tag != null) "#${state.tag}" else "EXPLORE", color = MikeMuted, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+            // Category chips.
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                @Composable fun chip(label: String, on: Boolean, tag: String?) {
+                    Text(label, color = if (on) Color.White else MikeOnSurface, fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(20.dp))
+                            .background(if (on) MikeAccent else MikeSurfaceVariant)
+                            .clickable { onTag(tag) }.padding(horizontal = 14.dp, vertical = 8.dp))
+                }
+                chip("🔥 Trending", state.tag == null, null)
+                state.tags.forEach { t -> chip(t, state.tag == t, t) }
+            }
+            Spacer(Modifier.height(14.dp))
+            when {
+                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                state.videos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Nothing to explore yet.", color = MikeMuted, fontSize = 14.sp)
+                }
+                else -> LazyVerticalStaggeredGrid(
+                    columns = StaggeredGridCells.Fixed(2),
+                    verticalItemSpacing = 10.dp,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(state.videos, key = { it.id }) { v -> VideoCard(v, 2, onOpen) }
+                }
+            }
         }
     }
 }
