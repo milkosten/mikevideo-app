@@ -62,6 +62,7 @@ import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tune
@@ -875,6 +876,15 @@ private fun PlayerScreen(
             var infoOpen by remember { mutableStateOf(false) }
             var liked by remember(v.id) { mutableStateOf(v.liked) }
             var likes by remember(v.id) { mutableStateOf(v.likes) }
+            // P10 player polish: playback speed + quality cap (0 = Auto).
+            var speed by remember(v.id) { mutableStateOf(1f) }
+            var qualityCap by remember(v.id) { mutableStateOf(0) }
+            LaunchedEffect(speed) { exo.setPlaybackSpeed(speed) }
+            LaunchedEffect(qualityCap) {
+                val cap = if (qualityCap == 0) Int.MAX_VALUE else qualityCap
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .setMaxVideoSize(cap, cap).build()
+            }
 
             // Full-bleed video surface — RESIZE_MODE_FIT contains any aspect (portrait fills
             // vertically, landscape fills horizontally); no more tiny 16:9 box + black void.
@@ -924,6 +934,12 @@ private fun PlayerScreen(
                     onBack = onBack,
                     onInfo = { infoOpen = true },
                     onToggleFill = { fill = !fill },
+                    onPip = {
+                        try {
+                            activity?.enterPictureInPictureMode(
+                                android.app.PictureInPictureParams.Builder().build())
+                        } catch (e: Exception) { /* device without PiP */ }
+                    },
                     onToggleRotate = {
                         landscape = !landscape
                         activity?.requestedOrientation =
@@ -940,6 +956,10 @@ private fun PlayerScreen(
                 autoplay = autoplay,
                 onToggleAutoplay = onToggleAutoplay,
                 onOpenRelated = { infoOpen = false; onOpenRelated(it) },
+                speed = speed,
+                onSetSpeed = { speed = it },
+                qualityCap = qualityCap,
+                onSetQuality = { qualityCap = it },
                 onSeek = { ms -> exo.seekTo(ms); exo.play(); infoOpen = false },
                 onClose = { infoOpen = false },
                 onOpenChannel = { h -> infoOpen = false; onOpenChannel(h) },
@@ -961,6 +981,7 @@ private fun PlayerTopBar(
     onBack: () -> Unit,
     onInfo: () -> Unit,
     onToggleFill: () -> Unit,
+    onPip: () -> Unit,
     onToggleRotate: () -> Unit,
 ) {
     Row(
@@ -998,6 +1019,9 @@ private fun PlayerTopBar(
         IconButton(onClick = onSaveClick) {
             Icon(Icons.Filled.PlaylistAdd, contentDescription = "Save to Watch Later", tint = Color.White)
         }
+        IconButton(onClick = onPip) {
+            Icon(Icons.Filled.PictureInPictureAlt, contentDescription = "Picture in picture", tint = Color.White)
+        }
         IconButton(onClick = onToggleFill) {
             Icon(
                 if (fill) Icons.Outlined.Fullscreen else Icons.Outlined.CropFree,
@@ -1027,6 +1051,10 @@ private fun VideoInfoOverlay(
     autoplay: Boolean = true,
     onToggleAutoplay: (Boolean) -> Unit = {},
     onOpenRelated: (VideoCloudClient.Video) -> Unit = {},
+    speed: Float = 1f,
+    onSetSpeed: (Float) -> Unit = {},
+    qualityCap: Int = 0,
+    onSetQuality: (Int) -> Unit = {},
     onSeek: (Long) -> Unit,
     onClose: () -> Unit,
     onOpenChannel: (String) -> Unit = {},
@@ -1125,6 +1153,36 @@ private fun VideoInfoOverlay(
                 }
                 Spacer(Modifier.height(16.dp))
             }
+
+            // Playback controls (P10) — speed + quality.
+            Text("Playback speed", color = MikeOnSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { sp ->
+                    val on = kotlin.math.abs(speed - sp) < 0.01f
+                    Text(if (sp == 1f) "Normal" else "${sp}×", color = if (on) MikeBg else MikeOnSurface,
+                        fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(20.dp))
+                            .background(if (on) MikeAccent else MikeSurfaceVariant)
+                            .clickable { onSetSpeed(sp) }.padding(horizontal = 14.dp, vertical = 8.dp))
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text("Quality", color = MikeOnSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0 to "Auto", 720 to "720p", 480 to "480p", 360 to "360p").forEach { (cap, label) ->
+                    val on = qualityCap == cap
+                    Text(label, color = if (on) MikeBg else MikeOnSurface,
+                        fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(20.dp))
+                            .background(if (on) MikeAccent else MikeSurfaceVariant)
+                            .clickable { onSetQuality(cap) }.padding(horizontal = 14.dp, vertical = 8.dp))
+                }
+            }
+            Spacer(Modifier.height(20.dp))
 
             // Up next (P7) — related videos + the autoplay toggle.
             if (related.isNotEmpty()) {
