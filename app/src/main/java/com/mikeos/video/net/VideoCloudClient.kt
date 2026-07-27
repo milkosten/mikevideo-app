@@ -342,6 +342,65 @@ class VideoCloudClient(
         } catch (e: Exception) { Log.w(TAG, "heartComment failed: ${e.message}"); false }
     }
 
+    /** One inbox notification (P8). Text is pre-rendered from the payload. */
+    data class Notification(
+        val id: String,
+        val kind: String,
+        val isRead: Boolean,
+        val createdAt: String?,
+        val text: String,
+        val thumbUrl: String?,
+        val videoId: String?,
+        val channelHandle: String?,
+    )
+
+    data class NotificationFeed(val items: List<Notification>, val unread: Int)
+
+    private fun parseNotification(o: JSONObject): Notification {
+        val kind = o.optString("kind")
+        val p = o.optJSONObject("payload") ?: JSONObject()
+        val actor = p.optJSONObject("actor")
+        val channel = p.optJSONObject("channel")
+        val who = channel?.strOrNull("display_name") ?: actor?.strOrNull("display_name")
+        val text = when (kind) {
+            "new_video" -> "${who ?: "A creator"} uploaded “${p.strOrNull("title") ?: "a video"}”"
+            "comment" -> "${who ?: "Someone"} commented: ${p.optString("snippet").take(70)}"
+            "subscriber" -> "${who ?: "Someone"} subscribed to you"
+            else -> "Notification"
+        }
+        return Notification(
+            id = o.optString("id"), kind = kind, isRead = o.optBoolean("is_read", false),
+            createdAt = o.strOrNull("created_at"), text = text,
+            thumbUrl = abs(p.strOrNull("thumb_url")), videoId = p.strOrNull("video_id"),
+            channelHandle = channel?.strOrNull("handle") ?: actor?.strOrNull("handle"),
+        )
+    }
+
+    /** `GET /api/notifications`. Key required (per-user inbox). */
+    suspend fun notifications(apiKey: String?): NotificationFeed? = withContext(Dispatchers.IO) {
+        if (apiKey.isNullOrBlank()) return@withContext null
+        try {
+            client.newCall(req(apiKey, "/api/notifications").get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext null
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                val arr = o.optJSONArray("notifications")
+                NotificationFeed(
+                    items = (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optJSONObject(it) }.map { parseNotification(it) },
+                    unread = o.optInt("unread_count", 0),
+                )
+            }
+        } catch (e: Exception) { Log.w(TAG, "notifications failed: ${e.message}"); null }
+    }
+
+    /** `POST /api/notifications/read` — a single id, or all when null. */
+    suspend fun markNotificationsRead(apiKey: String, id: String?): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val body = (if (id != null) JSONObject().put("id", id) else JSONObject()).toString().toRequestBody(jsonMedia)
+            client.newCall(req(apiKey, "/api/notifications/read").post(body).build()).execute().use { it.isSuccessful }
+        } catch (e: Exception) { Log.w(TAG, "markRead failed: ${e.message}"); false }
+    }
+
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
         val videoId: String,

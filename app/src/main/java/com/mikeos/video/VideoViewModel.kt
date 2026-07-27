@@ -62,6 +62,14 @@ data class CommentsState(
     val thread: VideoCloudClient.CommentThread? = null,
 )
 
+/** The notifications inbox (P8). [open] => show the screen; [unread] drives the bell badge. */
+data class NotificationsState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val items: List<VideoCloudClient.Notification> = emptyList(),
+    val unread: Int = 0,
+)
+
 class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val sync = SyncManager.get(app)
@@ -90,6 +98,9 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
     private val _comments = MutableStateFlow(CommentsState())
     val comments: StateFlow<CommentsState> = _comments.asStateFlow()
 
+    private val _notifs = MutableStateFlow(NotificationsState())
+    val notifs: StateFlow<NotificationsState> = _notifs.asStateFlow()
+
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
     private val _gridColumns = MutableStateFlow(prefs.getInt(KEY_COLUMNS, 2).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -101,6 +112,60 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
         _library.value = _library.value.copy(autoSync = sync.autoSyncEnabled, wifiOnly = sync.wifiOnly)
         refresh()
         startPolling()
+        refreshUnread()
+    }
+
+    // ---- Notifications (P8) ----------------------------------------------------------
+    /** Refresh just the unread count (drives the bell badge). */
+    fun refreshUnread() {
+        viewModelScope.launch {
+            val f = sync.notifications() ?: return@launch
+            _notifs.value = _notifs.value.copy(unread = f.unread, items = f.items)
+        }
+    }
+
+    fun openNotifications() {
+        _notifs.value = _notifs.value.copy(open = true, loading = true)
+        viewModelScope.launch {
+            val f = sync.notifications()
+            _notifs.value = NotificationsState(open = true, loading = false,
+                items = f?.items ?: emptyList(), unread = f?.unread ?: 0)
+        }
+    }
+
+    fun closeNotifications() { _notifs.value = _notifs.value.copy(open = false) }
+
+    fun markAllNotificationsRead() {
+        viewModelScope.launch { sync.markNotificationsRead(null); refreshUnread(); openNotificationsReload() }
+    }
+
+    private fun openNotificationsReload() {
+        viewModelScope.launch {
+            val f = sync.notifications()
+            _notifs.value = _notifs.value.copy(items = f?.items ?: emptyList(), unread = f?.unread ?: 0)
+        }
+    }
+
+    /** Tap a notification: mark it read, then navigate to its target. */
+    fun onNotificationClick(n: VideoCloudClient.Notification) {
+        viewModelScope.launch { sync.markNotificationsRead(n.id); refreshUnread() }
+        _notifs.value = _notifs.value.copy(open = false)
+        when {
+            n.videoId != null -> openVideoById(n.videoId)
+            n.channelHandle != null -> openChannel(n.channelHandle)
+        }
+    }
+
+    /** Open a video by id (fetch detail first) — used from notifications. */
+    fun openVideoById(id: String) {
+        _player.value = PlayerState(loading = true)
+        viewModelScope.launch {
+            val detail = sync.videoDetail(id)
+            if (detail == null) { _player.value = PlayerState(); return@launch }
+            _player.value = PlayerState(video = detail, loading = false)
+            launch { sync.reportView(id) }
+            launch { val rel = sync.related(id); _player.value = _player.value.copy(related = rel) }
+        }
     }
 
     /** Reload the cloud library + refresh the sync header line. */

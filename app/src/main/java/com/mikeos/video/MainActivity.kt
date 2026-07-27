@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tune
@@ -68,6 +69,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -152,6 +155,7 @@ class MainActivity : ComponentActivity() {
                 val homeFeedState by vm.homeFeed.collectAsStateWithLifecycle()
                 val commentsState by vm.comments.collectAsStateWithLifecycle()
                 val autoplay by vm.autoplay.collectAsStateWithLifecycle()
+                val notifsState by vm.notifs.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -202,6 +206,15 @@ class MainActivity : ComponentActivity() {
                         )
                         BackHandler { vm.closeHomeFeed() }
                     }
+                    notifsState.open -> {
+                        NotificationsScreen(
+                            state = notifsState,
+                            onBack = { vm.closeNotifications() },
+                            onClick = { vm.onNotificationClick(it) },
+                            onMarkAll = { vm.markAllNotificationsRead() },
+                        )
+                        BackHandler { vm.closeNotifications() }
+                    }
                     else -> {
                         LibraryScreen(
                             state = library,
@@ -217,6 +230,8 @@ class MainActivity : ComponentActivity() {
                             onOpen = { vm.openVideo(it) },
                             onOpenSubs = { vm.openSubsFeed() },
                             onOpenForYou = { vm.openHomeFeed() },
+                            onOpenNotifs = { vm.openNotifications() },
+                            unreadCount = notifsState.unread,
                         )
                     }
                 }
@@ -305,6 +320,8 @@ private fun LibraryScreen(
     onOpen: (VideoCloudClient.Video) -> Unit,
     onOpenSubs: () -> Unit = {},
     onOpenForYou: () -> Unit = {},
+    onOpenNotifs: () -> Unit = {},
+    unreadCount: Int = 0,
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -341,6 +358,15 @@ private fun LibraryScreen(
                 }
                 IconButton(onClick = onOpenSubs) {
                     Icon(Icons.Filled.Subscriptions, contentDescription = "Subscriptions", tint = MikeMuted)
+                }
+                IconButton(onClick = onOpenNotifs) {
+                    BadgedBox(badge = {
+                        if (unreadCount > 0) Badge(containerColor = MikeAccent) {
+                            Text(if (unreadCount > 9) "9+" else "$unreadCount", fontSize = 9.sp)
+                        }
+                    }) {
+                        Icon(Icons.Filled.Notifications, contentDescription = "Notifications", tint = MikeMuted)
+                    }
                 }
                 IconButton(onClick = { showSettings = true }) {
                     Icon(Icons.Filled.Tune, contentDescription = "Settings", tint = MikeMuted)
@@ -1256,6 +1282,71 @@ private fun SubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 10.dp),
     )
+}
+
+/** The notifications inbox (P8). */
+@Composable
+private fun NotificationsScreen(
+    state: NotificationsState,
+    onBack: () -> Unit,
+    onClick: (VideoCloudClient.Notification) -> Unit,
+    onMarkAll: () -> Unit,
+) {
+    val context = LocalContext.current
+    Scaffold(containerColor = MikeBg) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 14.dp).statusBarsPadding()) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
+                }
+                Text("NOTIFICATIONS", color = MikeMuted, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.weight(1f))
+                if (state.items.any { !it.isRead }) Text("Mark all read", color = MikeAccent,
+                    fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { onMarkAll() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            when {
+                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                state.items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Nothing yet — you'll hear when a channel you follow\nposts, or someone comments.",
+                        color = MikeMuted, fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+                else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    state.items.forEach { n ->
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .background(if (n.isRead) Color.Transparent else MikeAccent.copy(alpha = 0.10f))
+                                .clickable { onClick(n) }.padding(vertical = 12.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(width = 84.dp, height = 48.dp).clip(RoundedCornerShape(8.dp))
+                                .background(MikeSurfaceVariant), contentAlignment = Alignment.Center) {
+                                if (n.thumbUrl != null) AsyncImage(
+                                    model = ImageRequest.Builder(context).data(n.thumbUrl).crossfade(true).build(),
+                                    imageLoader = VideoImages.loader(context), contentDescription = null,
+                                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                else Icon(Icons.Filled.Notifications, null, tint = MikeMuted, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(n.text, color = MikeOnSurface, fontSize = 13.sp, maxLines = 3)
+                                Text(agoShort(n.createdAt), color = MikeMuted, fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(top = 2.dp))
+                            }
+                            if (!n.isRead) Box(Modifier.size(9.dp).clip(CircleShape).background(MikeAccent))
+                        }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                }
+            }
+        }
+    }
 }
 
 /** A generic public-video feed screen — used by both Subscriptions (P4) and For You (P6). */

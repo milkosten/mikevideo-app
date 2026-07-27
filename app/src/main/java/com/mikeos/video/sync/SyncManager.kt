@@ -209,6 +209,11 @@ class SyncManager private constructor(private val appContext: Context) {
     suspend fun related(videoId: String): List<VideoCloudClient.Video> =
         cloud.related(apiKey(), videoId)
 
+    // Notifications (P8)
+    suspend fun notifications(): VideoCloudClient.NotificationFeed? = cloud.notifications(apiKey())
+    suspend fun markNotificationsRead(id: String?): Boolean =
+        apiKey()?.let { cloud.markNotificationsRead(it, id) } ?: false
+
     // Comments (P5)
     suspend fun comments(videoId: String): VideoCloudClient.CommentThread? =
         cloud.comments(apiKey(), videoId)
