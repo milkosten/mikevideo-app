@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,6 +62,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Notifications
@@ -164,6 +167,7 @@ class MainActivity : ComponentActivity() {
                 val notifsState by vm.notifs.collectAsStateWithLifecycle()
                 val shortsState by vm.shorts.collectAsStateWithLifecycle()
                 val exploreState by vm.explore.collectAsStateWithLifecycle()
+                val studioState by vm.studio.collectAsStateWithLifecycle()
 
                 val playerActive = player.video != null || player.loading
                 val channelActive = channelState.page != null || channelState.loading
@@ -242,6 +246,14 @@ class MainActivity : ComponentActivity() {
                         )
                         BackHandler { vm.closeExplore() }
                     }
+                    studioState.open -> {
+                        StudioScreen(
+                            state = studioState,
+                            onBack = { vm.closeStudio() },
+                            onOpen = { vm.openVideoById(it) },
+                        )
+                        BackHandler { vm.closeStudio() }
+                    }
                     else -> {
                         LibraryScreen(
                             state = library,
@@ -261,6 +273,7 @@ class MainActivity : ComponentActivity() {
                             unreadCount = notifsState.unread,
                             onOpenShorts = { vm.openShorts() },
                             onOpenExplore = { vm.openExplore() },
+                            onOpenStudio = { vm.openStudio() },
                         )
                     }
                 }
@@ -353,6 +366,7 @@ private fun LibraryScreen(
     unreadCount: Int = 0,
     onOpenShorts: () -> Unit = {},
     onOpenExplore: () -> Unit = {},
+    onOpenStudio: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
@@ -479,6 +493,7 @@ private fun LibraryScreen(
                 onWifiOnly = onWifiOnly,
                 onForceSync = { onForceSync() },
                 onRefresh = onRefresh,
+                onOpenStudio = { showSettings = false; onOpenStudio() },
             )
         }
     }
@@ -513,6 +528,7 @@ private fun SettingsSheet(
     onWifiOnly: (Boolean) -> Unit,
     onForceSync: () -> Unit,
     onRefresh: () -> Unit,
+    onOpenStudio: () -> Unit = {},
 ) {
     Column(
         Modifier
@@ -559,6 +575,16 @@ private fun SettingsSheet(
             Icon(Icons.Filled.Refresh, contentDescription = null, tint = MikeMuted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.size(6.dp))
             Text("Refresh library", color = MikeMuted, fontSize = 13.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .clickable { onOpenStudio() }.background(MikeSurfaceVariant).padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.BarChart, contentDescription = null, tint = MikeOnSurface, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("Creator Studio", color = MikeOnSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -1536,6 +1562,99 @@ private fun ShortsScreen(
         }
         IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).statusBarsPadding()) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+        }
+    }
+}
+
+/** Creator Studio (P12): stat cards + a mini views chart + top videos. */
+@Composable
+private fun StudioScreen(
+    state: StudioState,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    fun watch(s: Int): String { val h = s / 3600; val m = (s % 3600) / 60; return if (h > 0) "${h}h ${m}m" else if (m > 0) "${m}m" else "${s}s" }
+    Scaffold(containerColor = MikeBg) { pad ->
+        Column(
+            Modifier.fillMaxSize().padding(pad).padding(horizontal = 14.dp).statusBarsPadding()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MikeOnSurface)
+                }
+                Text("CREATOR STUDIO", color = MikeMuted, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            }
+            Spacer(Modifier.height(14.dp))
+            when {
+                state.loading -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = MikeAccent)
+                }
+                state.data == null -> Text("Couldn't load Studio.", color = MikeMuted, fontSize = 14.sp)
+                else -> {
+                    val d = state.data
+                    @Composable fun RowScope.card(label: String, value: String) {
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                            .background(MikeSurfaceVariant).padding(16.dp)) {
+                            Text(value, color = MikeOnSurface, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                            Text(label, color = MikeMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        card("VIEWS", "${d.views}"); card("WATCH TIME", watch(d.watchSeconds))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        card("LIKES", "${d.likes}"); card("VIDEOS", "${d.videos} · ${d.publicVideos} public")
+                    }
+                    if (d.viewsByDay.isNotEmpty()) {
+                        Spacer(Modifier.height(20.dp))
+                        Text("Views · recent", color = MikeOnSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(10.dp))
+                        val mx = (d.viewsByDay.maxOrNull() ?: 1).coerceAtLeast(1)
+                        Row(Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(14.dp))
+                            .background(MikeSurfaceVariant).padding(12.dp),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            d.viewsByDay.forEach { n ->
+                                Box(Modifier.weight(1f).fillMaxHeight(fraction = (n.toFloat() / mx).coerceIn(0.04f, 1f))
+                                    .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)).background(MikeAccent))
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(22.dp))
+                    Text("Top videos", color = MikeOnSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    d.topVideos.forEach { tv ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .clickable { onOpen(tv.id) }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(width = 84.dp, height = 48.dp).clip(RoundedCornerShape(8.dp))
+                                .background(MikeBg), contentAlignment = Alignment.Center) {
+                                if (tv.thumbUrl != null) AsyncImage(
+                                    model = ImageRequest.Builder(context).data(tv.thumbUrl).crossfade(true).build(),
+                                    imageLoader = VideoImages.loader(context), contentDescription = null,
+                                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                else Icon(Icons.Filled.PlayArrow, null, tint = MikeMuted, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(11.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(tv.title ?: tv.filename, color = MikeOnSurface, fontSize = 13.sp, maxLines = 1)
+                                Text("${if (tv.visibility == "public") "🌐" else "🔒"} · ${tv.views} views · ${tv.likes} likes",
+                                    color = MikeMuted, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+                            }
+                            Text("${tv.views}", color = MikeAccent, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
         }
     }
 }

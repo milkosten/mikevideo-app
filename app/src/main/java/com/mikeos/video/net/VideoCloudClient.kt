@@ -469,6 +469,40 @@ class VideoCloudClient(
         } catch (e: Exception) { Log.w(TAG, "explore failed: ${e.message}"); null }
     }
 
+    /** Creator Studio (P12). */
+    data class StudioVideo(val id: String, val title: String?, val filename: String,
+                           val views: Int, val likes: Int, val visibility: String, val thumbUrl: String?)
+    data class StudioOverview(
+        val videos: Int, val publicVideos: Int, val views: Int, val likes: Int, val watchSeconds: Int,
+        val viewsByDay: List<Int>, val topVideos: List<StudioVideo>)
+
+    /** `GET /api/studio/overview` — analytics over the owner's own videos. Key required. */
+    suspend fun studioOverview(apiKey: String?): StudioOverview? = withContext(Dispatchers.IO) {
+        if (apiKey.isNullOrBlank()) return@withContext null
+        try {
+            client.newCall(req(apiKey, "/api/studio/overview").get().build()).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return@withContext null
+                val o = runCatching { JSONObject(raw) }.getOrNull() ?: return@withContext null
+                val t = o.optJSONObject("totals") ?: JSONObject()
+                val darr = o.optJSONArray("views_by_day")
+                val tarr = o.optJSONArray("top_videos")
+                StudioOverview(
+                    videos = t.optInt("videos", 0), publicVideos = t.optInt("public_videos", 0),
+                    views = t.optInt("views", 0), likes = t.optInt("likes", 0),
+                    watchSeconds = t.optInt("watch_seconds", 0),
+                    viewsByDay = (0 until (darr?.length() ?: 0)).mapNotNull { darr?.optJSONObject(it)?.optInt("count", 0) },
+                    topVideos = (0 until (tarr?.length() ?: 0)).mapNotNull { tarr?.optJSONObject(it) }.map { v ->
+                        StudioVideo(
+                            id = v.optString("id"), title = v.strOrNull("title"),
+                            filename = v.optString("filename"), views = v.optInt("views", 0),
+                            likes = v.optInt("likes", 0), visibility = v.optString("visibility"),
+                            thumbUrl = abs(v.strOrNull("thumb_url")))
+                    })
+            }
+        } catch (e: Exception) { Log.w(TAG, "studioOverview failed: ${e.message}"); null }
+    }
+
     /** The ticket + ingest coordinates minted by `POST /api/videos`. */
     data class Ticket(
         val videoId: String,

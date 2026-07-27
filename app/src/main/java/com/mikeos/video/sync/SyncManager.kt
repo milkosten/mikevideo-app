@@ -215,6 +215,9 @@ class SyncManager private constructor(private val appContext: Context) {
     /** Trending / Explore (P11). */
     suspend fun explore(tag: String?): VideoCloudClient.ExplorePage? = cloud.explore(apiKey(), tag)
 
+    /** Creator Studio analytics (P12). */
+    suspend fun studioOverview(): VideoCloudClient.StudioOverview? = cloud.studioOverview(apiKey())
+
     // Notifications (P8)
     suspend fun notifications(): VideoCloudClient.NotificationFeed? = cloud.notifications(apiKey())
     suspend fun markNotificationsRead(id: String?): Boolean =

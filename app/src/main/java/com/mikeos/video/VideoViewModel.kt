@@ -62,6 +62,13 @@ data class CommentsState(
     val thread: VideoCloudClient.CommentThread? = null,
 )
 
+/** Creator Studio (P12). [open] => show the screen. */
+data class StudioState(
+    val open: Boolean = false,
+    val loading: Boolean = false,
+    val data: VideoCloudClient.StudioOverview? = null,
+)
+
 /** Trending / Explore (P11). [open] => show the screen. */
 data class ExploreState(
     val open: Boolean = false,
@@ -122,6 +129,14 @@ class VideoViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _explore = MutableStateFlow(ExploreState())
     val explore: StateFlow<ExploreState> = _explore.asStateFlow()
+
+    private val _studio = MutableStateFlow(StudioState())
+    val studio: StateFlow<StudioState> = _studio.asStateFlow()
+    fun openStudio() {
+        _studio.value = StudioState(open = true, loading = true)
+        viewModelScope.launch { _studio.value = StudioState(open = true, loading = false, data = sync.studioOverview()) }
+    }
+    fun closeStudio() { _studio.value = StudioState() }
 
     // Library zoom level: how many columns the grid shows. Pinch to change it;
     // persisted so it sticks across launches. 2 = large, 4 = dense.
