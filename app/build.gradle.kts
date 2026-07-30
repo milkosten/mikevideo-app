@@ -14,7 +14,7 @@ android {
         applicationId = "com.mikeos.video"
         minSdk = 31
         targetSdk = 35
-        versionCode = 17
+        versionCode = 18
         versionName = "0.16.0"
 
         // MikeDaemon runs ON the phone (loopback). Auth token is pinned for dev.
@@ -30,7 +30,7 @@ android {
         buildConfigField(
             "String",
             "VIDEO_CLOUD_URL",
-            "\"https://video.osmike.com\""
+            "\"https://video-api.osmike.com\""
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
